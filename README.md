@@ -1,5 +1,7 @@
 # NBA Draft AI — Decision-Support System
 
+[![CI](https://github.com/fernandogg2004/NBA-Draft-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/fernandogg2004/NBA-Draft-AI/actions/workflows/ci.yml)
+
 A human-in-the-loop decision-support tool for NBA draft decisions. For each prospect it aims
 to: (1) project NBA production/trajectory, (2) estimate contribution to winning, (3) evaluate
 fit with a *specific* roster & system, and (4) quantify the uncertainty of every prediction.
