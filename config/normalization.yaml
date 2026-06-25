@@ -1,0 +1,24 @@
+# Normalization tables for Phase 2 entity resolution & integration.
+# Name suffixes are stripped when building match keys; league aliases map raw source strings
+# to the canonical league ids in config/leagues.yaml.
+
+name_suffixes: ["jr", "sr", "ii", "iii", "iv", "v"]
+
+# raw (lowercased) -> canonical league id
+league_aliases:
+  "ncaa": "ncaa"
+  "ncaa division i": "ncaa"
+  "ncaad1": "ncaa"
+  "college": "ncaa"
+  "cbb": "ncaa"
+  "euroleague": "euroleague"
+  "eurolega": "euroleague"
+  "el": "euroleague"
+  "g league": "gleague"
+  "g-league": "gleague"
+  "nba g league": "gleague"
+  "gleague": "gleague"
+  "nbl": "nbl"
+  "australian nbl": "nbl"
+  "fiba": "fiba"
+  "international": "fiba"

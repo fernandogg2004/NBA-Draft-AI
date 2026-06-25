@@ -1,0 +1,14 @@
+# DVC-tracked pipeline parameters (Phase 12). Mirrors config/ for the DVC stage graph.
+# Change a value here -> `dvc repro` re-runs only the affected stages.
+seed: 42
+
+validation:
+  n_holdout_years: 2
+  min_train_years: 4
+
+model:
+  family: ridge
+  alpha: 1.0
+
+drift:
+  psi_threshold: 0.25

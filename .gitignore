@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data (DVC-tracked; never commit raw bytes)
+data/raw/
+data/interim/
+data/processed/
+data/external/
+!data/**/.gitkeep
+
+# Experiments / artifacts
+experiments/mlruns/
+mlruns/
+artifacts/
+outputs/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Local Claude settings (may contain machine-specific commands / secrets)
+.claude/settings.local.json
+
+# MLflow local SQLite backend + artifacts
+experiments/*.db
+mlartifacts/

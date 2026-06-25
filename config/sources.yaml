@@ -1,0 +1,110 @@
+# Phase 1 data-source registry. Each entry records provenance, license, and the result of a
+# robots.txt / ToS review (verified 2026-06-25). `enabled: false` blocks any ingestion until a
+# human clears it. Conservative posture: prefer APIs/open datasets; never scrape paths that
+# robots.txt disallows. See instructions.md Phase 1.
+#
+# Schema (validated by src/nba_draft/ingestion/registry.py):
+#   id, name, kind(api|open_dataset|scrape), base_url, license, tos_url,
+#   robots_summary, scraping_allowed, requires_key, rate_limit_per_min,
+#   attribution_required, enabled, coverage[], notes
+
+sources:
+  - id: nba_stats
+    name: "NBA Stats (stats.nba.com via nba_api)"
+    kind: api
+    base_url: "https://stats.nba.com"
+    license: "nba_api library MIT; data subject to NBA.com Terms of Use"
+    tos_url: "https://www.nba.com/termsofuse"
+    robots_summary: "Unofficial/undocumented endpoints; not robots-cleared. Cloud IPs get banned; local personal/research use is the norm."
+    scraping_allowed: false      # not a generic scrape; access only via nba_api client, locally
+    requires_key: false
+    rate_limit_per_min: 20       # ~3s spacing; conservative to avoid bans
+    attribution_required: true
+    enabled: true
+    coverage:
+      - "draft history (picks by year)"
+      - "draft combine: anthro (wingspan, standing reach), strength/agility, vertical, sprint"
+      - "player season box + advanced (basis to COMPUTE BPM/VORP)"
+      - "team season stats (for BPM team adjustment)"
+    notes: "PRIMARY NBA-outcome + Combine source. Run locally only. BPM/VORP are computed from raw box+team data via the public BPM 2.0 formula (BBRef scrape is disallowed)."
+
+  - id: college_bb_data
+    name: "CollegeBasketballData.com API"
+    kind: api
+    base_url: "https://api.collegebasketballdata.com"
+    license: "Developer API, free tier with key (CFBD-family). Accepting a key = accepting provider terms; typ. attribution + no redistribution. Confirm exact terms on signup."
+    tos_url: "https://collegebasketballdata.com/key"
+    robots_summary: "Developer REST API; Bearer-token auth (Authorization: Bearer <key>). Verified 2026-06-25: base https://api.collegebasketballdata.com, docs at /docs. Polite use expected; key revoked on abuse."
+    scraping_allowed: false       # it's an authenticated API, not a scrape
+    requires_key: true
+    rate_limit_per_min: 20        # ~3s spacing; provider asks to avoid bursts
+    attribution_required: true
+    enabled: false                # gate is API-key presence (see CollegeBasketballDataIngester)
+    coverage:
+      - "NCAA player season stats (/stats/player/season) — pre-draft production FEATURES"
+      - "teams (/teams), rosters (/teams/roster) for SoS + entity linking"
+    notes: "PRE-DRAFT college feature source. Endpoint paths default to documented conventions; verify with scripts/verify_cbd.py once a key is set."
+
+  - id: euroleague
+    name: "EuroLeague / EuroCup feeds (euroleague_api)"
+    kind: api
+    base_url: "https://live.euroleague.net"
+    license: "EuroLeague content Terms of Use; euroleague_api wraps public feeds"
+    tos_url: "https://www.euroleaguebasketball.net/"
+    robots_summary: "Public feeds via unofficial wrapper; ToU review pending."
+    scraping_allowed: false
+    requires_key: false
+    rate_limit_per_min: 30
+    attribution_required: true
+    enabled: false               # pending ToU review
+    coverage:
+      - "EuroLeague/EuroCup box + advanced for international prospects"
+    notes: "International coverage candidate. Review ToU before enabling."
+
+  - id: basketball_reference
+    name: "Basketball-Reference"
+    kind: scrape
+    base_url: "https://www.basketball-reference.com"
+    license: "Proprietary (Sports Reference LLC). Scraping prohibited; data pages disallowed by robots."
+    tos_url: "https://www.sports-reference.com/data_use.html"
+    robots_summary: "robots.txt DISALLOWS /basketball/ and stat paths for all crawlers; crawl-delay 3."
+    scraping_allowed: false
+    requires_key: false
+    rate_limit_per_min: 0
+    attribution_required: true
+    enabled: false               # do NOT scrape
+    coverage:
+      - "origin of BPM/VORP definitions (we compute equivalents from nba_api instead)"
+    notes: "EXCLUDED from automated access. Manual CSV export is personal-use only. We compute BPM/VORP ourselves."
+
+  - id: bart_torvik
+    name: "Bart Torvik (T-Rank)"
+    kind: scrape
+    base_url: "https://barttorvik.com"
+    license: "Proprietary; data endpoints disallowed by robots."
+    tos_url: "https://barttorvik.com/"
+    robots_summary: "robots.txt DISALLOWS db.php, trank-time-machine, playerstat.php, *.json for all bots."
+    scraping_allowed: false
+    requires_key: false
+    rate_limit_per_min: 0
+    attribution_required: true
+    enabled: false               # data endpoints robots-disallowed
+    coverage:
+      - "rich NCAA advanced stats (if permission obtained)"
+    notes: "EXCLUDED unless explicit permission obtained. Use CollegeBasketballData.com instead."
+
+  - id: kenpom
+    name: "KenPom"
+    kind: scrape
+    base_url: "https://kenpom.com"
+    license: "Paid subscription; scraping against ToS."
+    tos_url: "https://kenpom.com/"
+    robots_summary: "Subscription site; automated access against terms."
+    scraping_allowed: false
+    requires_key: true
+    rate_limit_per_min: 0
+    attribution_required: true
+    enabled: false
+    coverage:
+      - "NCAA efficiency ratings (subscription only)"
+    notes: "EXCLUDED. Subscription content."

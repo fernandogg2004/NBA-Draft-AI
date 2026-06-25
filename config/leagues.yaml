@@ -1,0 +1,25 @@
+# League registry + inter-league translation priors (Phases 2 & 4).
+# `tier` is a coarse strength ordering used only as a PRIOR; dynamic strength-of-schedule
+# (by season and team) is computed in features, not hard-coded here.
+# Translation factors are STUBS for Milestone 0 — estimated empirically in Phase 4.
+leagues:
+  - id: "ncaa"
+    name: "NCAA Division I"
+    tier: 2
+    metric_richness: high      # KenPom / Bart Torvik style advanced stats available
+  - id: "euroleague"
+    name: "EuroLeague"
+    tier: 1
+    metric_richness: medium
+  - id: "gleague"
+    name: "NBA G League"
+    tier: 1
+    metric_richness: medium
+  - id: "nbl"
+    name: "Australian NBL"
+    tier: 2
+    metric_richness: low       # often only basic box-score + combine
+  - id: "fiba"
+    name: "FIBA / other international"
+    tier: 3
+    metric_richness: low

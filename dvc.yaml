@@ -1,0 +1,23 @@
+# DVC pipeline definition (Phase 12). Reproduce with `dvc repro` once git + DVC are initialized:
+#   git init && dvc init && dvc repro
+# A single stage here invokes the orchestrated Python pipeline (which itself runs integrate ->
+# evaluate -> train -> register -> monitor). Splitting into finer DVC stages is straightforward
+# once real ingestion writes intermediate artifacts to data/.
+stages:
+  pipeline:
+    cmd: python scripts/run_pipeline.py
+    deps:
+      - scripts/run_pipeline.py
+      - src/nba_draft
+      - config/config.yaml
+      - config/targets.yaml
+      - config/cba_rules.yaml
+    params:
+      - seed
+      - validation.n_holdout_years
+      - validation.min_train_years
+      - model.alpha
+      - drift.psi_threshold
+    outs:
+      - artifacts/pipeline/run_summary.json:
+          cache: false

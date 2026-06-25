@@ -1,0 +1,54 @@
+# Phase 0 — target definitions. Single source of truth for what we predict and how labels
+# are constructed from realized NBA outcomes. Confirmed decisions (2026-06-25):
+#   * impact spine = box-score public metrics (BPM peak, VORP cumulative)
+#   * outcome tiers = hybrid (honors for top tiers, BPM bands for lower tiers)
+#   * horizon = debut-anchored, capped: must debut within `debut_cap_years` of draft
+# All thresholds are tunable and sanity-checked against base rates in Phase 3.
+
+horizon:
+  primary_window_years: 4      # first N NBA seasons from debut
+  secondary_window_years: 7    # late-developer window (modeled separately, lower priority)
+  debut_cap_years: 4           # must reach the NBA within N years of draft, else non-reach
+
+# T1 — reach probability (hurdle gate; fit over ALL prospects to defeat survivorship).
+reach:
+  min_window_minutes: 1000     # total minutes across the primary window to count as "reached"
+
+# T2 — peak impact (ceiling/talent). Conditional on minutes for a stable estimate.
+peak_impact:
+  metric: "bpm"
+  stable_season_minutes: 500   # a season needs >= this many minutes to count toward peak
+  top_n_seasons: 2             # peak = mean of the best N qualifying seasons by metric
+
+# T3 — cumulative value (realized contribution to winning).
+cumulative_value:
+  metric: "vorp"
+
+# Replacement levels used to fill non-reach outcomes in the unconditional expected value.
+replacement:
+  bpm: -2.0
+  vorp: 0.0
+
+# T4 — outcome tiers (hybrid). Order matters: evaluated top-down.
+# A tier matches if EITHER an honors condition OR the bpm lower-bound is met.
+tiers:
+  - name: "superstar"      # All-NBA caliber
+    requires_reach: true
+    honors: ["all_nba"]
+    peak_bpm_min: 6.0
+  - name: "all_star"
+    requires_reach: true
+    honors: ["all_star"]
+    peak_bpm_min: 3.0
+  - name: "starter"
+    requires_reach: true
+    honors: []
+    peak_bpm_min: 0.0
+  - name: "rotation"
+    requires_reach: true
+    honors: []
+    peak_bpm_min: -2.0
+  - name: "bust"           # fallback: never reached, or below rotation band
+    requires_reach: false
+    honors: []
+    peak_bpm_min: null

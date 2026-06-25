@@ -1,0 +1,55 @@
+# CBA / apron / rookie-scale parameters for the financial-fit layer (Phase 8).
+# These change season to season — verified via web on 2026-06-25. Each season carries a
+# `verified` flag; projections are flagged so the system can surface them as ASSUMPTIONS.
+#
+# Sources:
+#   2025-26 (official, NBA.com): cap 154.647M, tax 187.895M, apron1 195.945M, apron2 207.824M
+#   2026-27 (PROJECTION, media-revenue dip; Yahoo/HoopsRumors): cap ~165M, tax ~201M,
+#           apron1 ~209M, apron2 ~222M  — subject to change, treat as assumption.
+
+default_season: "2026-27"   # the draft-relevant year for a mid-2026 decision (projected)
+
+seasons:
+  "2025-26":
+    verified: true
+    verified_on: "2026-06-25"
+    source: "NBA.com (official)"
+    salary_cap_usd: 154647000
+    luxury_tax_usd: 187895000
+    first_apron_usd: 195945000
+    second_apron_usd: 207824000
+  "2026-27":
+    verified: false          # PROJECTION — surfaced as an assumption in outputs
+    verified_on: "2026-06-25"
+    source: "Yahoo Sports / Hoops Rumors projections (lower than earlier amid media revenue dip)"
+    salary_cap_usd: 165000000
+    luxury_tax_usd: 201000000
+    first_apron_usd: 209000000
+    second_apron_usd: 222000000
+
+# First-year rookie-scale salary by pick (120% standard). 2025-draft values:
+#   picks 1-10 verified (Hoops Rumors); 11-14 approximate; picks >14 extrapolated by the loader.
+#   UPDATE these for the actual target draft year.
+rookie_scale_first_year_usd:
+  1: 13825920
+  2: 12370200
+  3: 11108880
+  4: 9069840
+  5: 8237640
+  6: 7520040
+  7: 6889200
+  8: 6332520
+  9: 6016080
+  10: 5715120
+  11: 5429520
+  12: 5163480
+  13: 4914840
+  14: 4682640
+
+# Conversion from projected on-court value to dollars for Real Surplus Value.
+# ASSUMPTIONS — rough industry rules of thumb; tune against the FA market. Flagged in outputs.
+valuation:
+  assumption: true
+  wins_per_vorp: 2.7              # ~wins added per 1.0 VORP over a season
+  dollars_per_win_usd: 3500000   # marginal market $ per win
+  rookie_contract_years: 4       # rookie-scale control window
