@@ -19,11 +19,12 @@ from nba_draft.features.transforms import (
     sequence_features,
 )
 
-# Columns that describe what happened AFTER the draft — must never appear as features.
+# NBA OUTCOME columns (known only after the draft) — must never be used as features. Note
+# `draft_pick` is deliberately NOT here: it is decided AT the draft and is a legitimate
+# consensus feature for the production model (see realdata.build / instructions).
 FORBIDDEN_POST_DRAFT_COLUMNS: frozenset[str] = frozenset(
     {
         "nba_impact",
-        "draft_pick",
         "reached",
         "peak_impact",
         "cumulative_value",

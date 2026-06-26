@@ -46,10 +46,6 @@ def make_requests_fetcher(headers: dict[str, str] | None = None) -> Fetcher:
     return _fetch
 
 
-def _default_fetcher(url: str, params: dict[str, str] | None) -> tuple[int, bytes]:
-    return make_requests_fetcher()(url, params)
-
-
 class RateLimiter:
     """Enforce a minimum interval between calls (clock/sleep injectable for tests)."""
 

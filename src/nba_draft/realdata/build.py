@@ -182,6 +182,7 @@ def evaluate_real_models(
     import json
 
     from nba_draft.evaluation.metrics import spearman_corr
+    from nba_draft.features import assert_pre_draft_safe
     from nba_draft.mlops.registry import register_model
     from nba_draft.mlops.tracking import ExperimentTracker
     from nba_draft.models import DraftPositionEstimator, gbm_regressor, logistic_classifier
@@ -194,6 +195,9 @@ def evaluate_real_models(
 
     out = Path(output_root)
     out.mkdir(parents=True, exist_ok=True)
+
+    # Leakage guard: the chosen feature columns must not include any post-draft outcome column.
+    assert_pre_draft_safe(table.select([c for c in feature_cols if c in table.columns]))
 
     # Resolved prospects only (label fully observed). "Reached" requires a stable peak so the
     # impact head has a real value; everyone else is scored at replacement in `realized`.

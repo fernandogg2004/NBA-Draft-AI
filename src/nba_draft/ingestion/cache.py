@@ -32,10 +32,6 @@ class FileCache:
         base = self.root / source_id
         return base / f"{key}.{self.ext}", base / f"{key}.prov.json"
 
-    def has(self, source_id: str, key: str) -> bool:
-        payload, _ = self._paths(source_id, key)
-        return payload.exists()
-
     def get(self, source_id: str, key: str) -> bytes | None:
         """Return cached payload bytes, or ``None`` if absent."""
         payload, _ = self._paths(source_id, key)

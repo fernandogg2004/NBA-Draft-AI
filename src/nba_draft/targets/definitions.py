@@ -41,7 +41,6 @@ class OutcomeTier(enum.Enum):
 # --------------------------------------------------------------------------------------
 class HorizonSpec(BaseModel):
     primary_window_years: int = Field(gt=0)
-    secondary_window_years: int = Field(gt=0)
     debut_cap_years: int = Field(ge=0)
 
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 # Repo root resolved relative to this file: src/nba_draft/config.py -> repo/
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -28,11 +28,9 @@ class Paths(BaseModel):
 
 class Horizon(BaseModel):
     primary_window_years: int = Field(gt=0)
-    include_peak: bool = True
 
 
 class ValidationConfig(BaseModel):
-    draft_year_column: str = "draft_year"
     n_holdout_years: int = Field(ge=1)
     min_train_years: int = Field(ge=1)
     val_horizon_years: int = Field(ge=1)
@@ -40,22 +38,11 @@ class ValidationConfig(BaseModel):
     expanding: bool = True
 
 
-class EvaluationConfig(BaseModel):
-    top_k: list[int] = Field(default_factory=lambda: [5, 10, 30])
-
-    @model_validator(mode="after")
-    def _positive_k(self) -> EvaluationConfig:
-        if any(k <= 0 for k in self.top_k):
-            raise ValueError("evaluation.top_k values must be positive")
-        return self
-
-
 class Config(BaseModel):
     seed: int = 42
     paths: Paths
     horizon: Horizon
     validation: ValidationConfig
-    evaluation: EvaluationConfig
 
     # Resolved at load time, not from YAML.
     repo_root: Path = REPO_ROOT

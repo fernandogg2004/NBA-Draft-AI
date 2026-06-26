@@ -11,22 +11,15 @@ paths:
   artifacts: "artifacts"
   experiments: "experiments"
 
-# Prediction horizon for the primary target (see Phase 0 discussion).
-# Default per agreement: first 4 NBA years, peak as secondary.
+# Prediction horizon for the primary target (first 4 NBA years).
 horizon:
   primary_window_years: 4
-  include_peak: true
 
 # Temporal validation (Phase 5). The holdout is the most-recent classes; never touched
 # until final evaluation. Walk-forward validates on the years just before the holdout.
 validation:
-  draft_year_column: "draft_year"
   n_holdout_years: 2        # most recent N draft classes reserved as untouchable test
   min_train_years: 4        # smallest training span before the first validation fold
   val_horizon_years: 1      # how many years each validation fold spans
   step_years: 1             # stride between folds
   expanding: true           # expanding (true) vs sliding/rolling (false) train window
-
-evaluation:
-  # k values for top-k "did we identify the hits" ranking metrics
-  top_k: [5, 10, 14, 30]

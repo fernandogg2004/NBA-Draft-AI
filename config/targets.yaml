@@ -7,7 +7,6 @@
 
 horizon:
   primary_window_years: 4      # first N NBA seasons from debut
-  secondary_window_years: 7    # late-developer window (modeled separately, lower priority)
   debut_cap_years: 4           # must reach the NBA within N years of draft, else non-reach
 
 # T1 — reach probability (hurdle gate; fit over ALL prospects to defeat survivorship).

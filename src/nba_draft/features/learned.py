@@ -128,7 +128,3 @@ class LeagueSeasonContextModel:
             std_safe = pl.when(std_ls.is_null() | (std_ls <= 0)).then(gstd).otherwise(std_ls)
             out = out.with_columns(((pl.col(self.sos_col) - mean_ls) / std_safe).alias("sos_z"))
         return out
-
-    def fit_transform(self, train: pl.DataFrame) -> pl.DataFrame:
-        """TRAIN-fold convenience only. Never call on combined train+val data."""
-        return self.fit(train).transform(train)
