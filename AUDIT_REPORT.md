@@ -237,3 +237,55 @@ IP and `CBD_API_KEY`; audited **statically** only. The PROJECT_STATE real-result
 here** — and the 0.336 additionally carries the A3 optimism caveat. The MLflow-enabled tracking branch
 and the LightGBM/sklearn GBM fallbacks were not exercised (offline suite uses XGBoost + disabled
 tracking).
+
+---
+
+# 🔁 Re-audit (post-fix) — 2026-06-26
+
+After applying the fixes and new features, the AUDIT.md procedure was re-run. **Traffic light:
+🟢 GREEN** — every actionable finding from the first pass is resolved; remaining items are
+by-design or environment-bound.
+
+## Original findings — resolution
+
+| # | Finding | Status | Evidence |
+|---|---|---|---|
+| A1 | Hurdle not wired | **Fixed** | `models/hurdle.py::HurdleModel` + `validation.walk_forward_hurdle_evaluate`; wired in `mlops/pipeline.py` and `realdata/build.py::evaluate_real_models`. Synthetic run logs `Hurdle … spearman=0.649`. |
+| A2 | Holdout never evaluated | **Fixed** | Synthetic pipeline logs `FINAL holdout spearman=…`; `evaluate_real_models` carves dev/holdout and reports hurdle on the holdout. |
+| A3 | Tuning on eval folds | **Fixed** | Real tuning runs on `dev_reached` only; the headline is the untouchable-holdout score. |
+| A4 | `params.yaml` not read | **Fixed** | `mlops.pipeline.load_params` reads it (seed/validation/alpha/psi); `test_load_params_reads_dvc_params`. |
+| pyarrow gotcha (false) | **Fixed** | `pyarrow` declared in `[app]`; PROJECT_STATE corrected. |
+| pymc/mapie unused | **Fixed** | Removed from extras; deptry no longer flags them. |
+| test-extras DX gap | **Fixed** | `[test]` extra added; README documents it; CI installs `[test]`. |
+| A5 unused config keys | **Fixed** | Removed `evaluation.top_k`, `horizon.include_peak`, `validation.draft_year_column`, `secondary_window_years`. |
+| A6 real-path guard | **Fixed** | `evaluate_real_models` calls `assert_pre_draft_safe` on the feature columns. |
+| Dead code | **Fixed** | Removed `_default_fetcher`, `FileCache.has`, `LeagueSeasonContextModel.fit_transform`. |
+| Latent circular import (new) | **Fixed** | `evaluation.comparison` now imports `walk_forward_evaluate` lazily. |
+| Orphaned survival (T5) | **Fixed** | Cox now wired via `evaluate_real_models::_evaluate_longevity` (holdout concordance). |
+| Honors fallback-only tiers | **Implemented** | `targets/honors.py` + `build_player_outcomes(honors=…)`. |
+
+## New verification run
+
+| Check | Result |
+|---|---|
+| `pytest` | ✅ 175 passed |
+| `ruff` / `mypy --strict` | ✅ clean (81 source files) |
+| `python scripts/run_pipeline.py` | ✅ hurdle 0.649 + holdout 0.725 |
+| `coverage` | **88.6%** total (CI gate `--cov-fail-under=85`); `realdata/build.py` 46%→81% |
+| `deptry` | no real issues (pymc/mapie gone; remaining DEP002 are runtime/CLI/dev tools) |
+| `vulture` | only `tracking.py:79 tb` (context-manager protocol param) |
+| CI on `main` | ✅ green; Dependabot active (already opened/passed a bump PR) |
+
+## Remaining items (by-design / environment — not defects)
+
+- **`unconditional_value`** (`targets/definitions.py`) is still only called from tests. It is now a
+  deliberate, tested *scalar reference* of the EV formula that the (wired, vectorized) `HurdleModel`
+  implements. Low; kept intentionally.
+- **`tracking.py:79 tb`** — unused traceback parameter required by the `__exit__` protocol. Low.
+- **deptry DEP002** for `uvicorn`/`pyarrow`/`dvc`/`pytest`/`pytest-cov`/`ruff`/`mypy`/`httpx` —
+  runtime/CLI/dev tools not imported in code (pyarrow is a runtime backend for `polars.to_pandas`).
+  Expected false positives.
+- **EuroLeague / international pre-draft features** — deliberately deferred (large + network-bound);
+  not added as a stub to avoid new half-built code.
+- **Real (live) path** — still `verification pending (environment)` (residential IP + `CBD_API_KEY`);
+  its modeling/eval logic is now covered offline via `evaluate_real_models`.
