@@ -95,6 +95,15 @@ def test_tracker_disabled_is_noop():
 
 
 # ----------------------------------------------------------------- end-to-end pipeline
+def test_load_params_reads_dvc_params():
+    from nba_draft.mlops.pipeline import load_params
+
+    params = load_params()  # reads the repo's params.yaml
+    assert "seed" in params
+    assert "alpha" in params.get("model", {})
+    assert "psi_threshold" in params.get("drift", {})
+
+
 def test_run_pipeline_end_to_end(tmp_path):
     result = run_pipeline(
         output_root=tmp_path / "pipeline",

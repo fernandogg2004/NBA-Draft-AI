@@ -20,9 +20,10 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
+import yaml
 
 from nba_draft.cleaning.master import build_master
-from nba_draft.config import load_config
+from nba_draft.config import REPO_ROOT, load_config
 from nba_draft.data.fixtures import (
     FEATURE_COLUMNS,
     TARGET_COLUMN,
@@ -58,6 +59,19 @@ class PipelineResult:
     summary_path: str = ""
 
 
+def load_params(path: str | Path | None = None) -> dict[str, Any]:
+    """Load DVC-tracked pipeline parameters from params.yaml (the source DVC `repro` versions).
+
+    Editing params.yaml changes the pipeline (so `dvc repro` is meaningful); config/config.yaml
+    supplies defaults for anything params.yaml omits.
+    """
+    p = Path(path) if path is not None else REPO_ROOT / "params.yaml"
+    if not p.exists():
+        return {}
+    data: dict[str, Any] = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    return data
+
+
 def run_pipeline(
     *,
     seed: int | None = None,
@@ -68,19 +82,27 @@ def run_pipeline(
 ) -> PipelineResult:
     """Run the full pipeline and return a :class:`PipelineResult`."""
     cfg = load_config()
-    seed = cfg.seed if seed is None else seed
+    params = load_params()
+    validation_params = params.get("validation", {})
+    seed = params.get("seed", cfg.seed) if seed is None else seed
     set_global_seed(seed)
     out = Path(output_root)
     out.mkdir(parents=True, exist_ok=True)
     feats = list(FEATURE_COLUMNS)
-    mty = cfg.validation.min_train_years
+    mty = int(validation_params.get("min_train_years", cfg.validation.min_train_years))
+    n_holdout = int(validation_params.get("n_holdout_years", cfg.validation.n_holdout_years))
+    alpha = float(params.get("model", {}).get("alpha", 1.0))
+    psi_threshold = float(params.get("drift", {}).get("psi_threshold", 0.25))
 
     with ExperimentTracker(
         run_name=f"pipeline-{datetime.now(UTC):%Y%m%d-%H%M%S}",
         tracking_uri=tracking_uri,
         enabled=tracking_enabled,
     ) as tracker:
-        tracker.log_params({"seed": seed, "min_train_years": mty, "n_features": len(feats)})
+        tracker.log_params(
+            {"seed": seed, "min_train_years": mty, "n_features": len(feats),
+             "alpha": alpha, "psi_threshold": psi_threshold}
+        )
 
         # 1. integrate -> versioned master dataset (entity resolution across sources)
         fx = make_multisource_fixture()
@@ -93,9 +115,7 @@ def run_pipeline(
 
         # 2. evaluate (temporal CV) — models vs draft-position baseline
         df = make_synthetic_prospects(seed=seed)
-        split = make_data_split(
-            df, year_col=YEAR_COLUMN, n_holdout_years=cfg.validation.n_holdout_years
-        )
+        split = make_data_split(df, year_col=YEAR_COLUMN, n_holdout_years=n_holdout)
         dev = split.dev
         specs = {
             "baseline_draftpos": make_spec(
@@ -104,7 +124,7 @@ def run_pipeline(
             ),
             "mean": make_spec(feats, mean_regressor, lambda: FoldPreprocessor(feats)),
             "ridge": make_spec(
-                feats, lambda: ridge_regressor(1.0), lambda: FoldPreprocessor(feats)
+                feats, lambda: ridge_regressor(alpha), lambda: FoldPreprocessor(feats)
             ),
             "gbm": make_spec(feats, gbm_regressor, lambda: FoldPreprocessor(feats)),
         }
@@ -154,7 +174,7 @@ def run_pipeline(
         pp = FoldPreprocessor(feats).fit(dev)
         x_tr = pp.transform_matrix(dev).to_numpy()
         y_tr = dev[TARGET_COLUMN].to_numpy().astype(float)
-        model = ridge_regressor(1.0)
+        model = ridge_regressor(alpha)
         model.fit(x_tr, y_tr)
 
         # 3b. FINAL evaluation on the untouchable holdout (fit on dev, scored on locked classes).
@@ -182,7 +202,7 @@ def run_pipeline(
         )
 
         # 5. monitor — drift between dev (reference) and the held-out "new class"
-        drift = feature_drift_report(dev, split.holdout, feats)
+        drift = feature_drift_report(dev, split.holdout, feats, psi_threshold=psi_threshold)
 
         summary = {
             "created_at": datetime.now(UTC).isoformat(),

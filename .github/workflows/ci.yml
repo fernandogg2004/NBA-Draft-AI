@@ -24,12 +24,12 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install (all extras)
-        # Full extras so every test runs (models, explain, app, mlops, ingest) + dev tooling.
-        # No test makes a network call, so the suite is CI-safe.
+      - name: Install (test extra)
+        # The [test] extra is the exact set the offline suite needs (dev tooling + the optional
+        # libs that tests import). No test makes a network call, so the suite is CI-safe.
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,models,explain,app,mlops,ingest]"
+          pip install -e ".[test]"
 
       - name: Ruff (lint)
         run: ruff check src tests scripts api dashboard

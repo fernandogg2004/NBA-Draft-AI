@@ -273,8 +273,12 @@ Optional dependency groups (install what you need):
 | `eda` | matplotlib | EDA plots |
 
 ```bash
+pip install -e ".[test]"                                      # everything the test suite needs
 pip install -e ".[dev,models,explain,app,mlops,ingest,eda]"   # everything
 ```
+
+> **To get green tests from zero:** `pip install -e ".[test]"` then `pytest`. The bare `[dev]`
+> extra installs only tooling, so several test files (which import xgboost/shap/fastapi) would fail.
 
 ---
 

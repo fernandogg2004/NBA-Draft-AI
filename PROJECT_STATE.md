@@ -237,7 +237,7 @@ review + enable gates), `cba_rules.yaml` (cap/aprons/rookie scale per season), `
   the same runner for honest comparison).
 - `tuning.py` — `tune_estimator`: Optuna TPE optimizing the mean walk-forward metric (leakage-safe).
 - `survival.py` — `CoxSurvivalModel` (lifelines) + `concordance`. (Builds the pandas frame manually
-  because `pyarrow` is not installed — see gotchas.)
+  from numpy so it works with or without `pyarrow`.)
 
 ### `evaluation/`
 - `metrics.py` — `spearman_corr`, `kendall_tau`, `top_k_hit_rate`, `rmse`, `brier_score`,
@@ -362,9 +362,9 @@ exact magnitudes as indicative.
   players **never reached the NBA** (no profile). Verified: **0 of 389 trainable players** have a
   null age, so the impact model's age data is complete. The pull is resilient (per-player
   try/except → null age → imputed); failures aren't cached so they retry but keep failing.
-- **`pyarrow` is NOT installed.** `polars.to_pandas()` therefore fails; the survival model builds
-  its pandas frame manually from numpy. If you need pandas conversion elsewhere, install pyarrow or
-  build frames manually.
+- **`pyarrow` is required for `polars.to_pandas()`** (used by the Streamlit dashboard) and is now
+  declared in the `[app]` extra. The survival model still builds its pandas frame manually from
+  numpy, so it works with or without pyarrow.
 - **MLflow 3.x deprecated the file store** → the tracker defaults to SQLite
   (`sqlite:///experiments/mlflow.db`). View runs with
   `mlflow ui --backend-store-uri sqlite:///experiments/mlflow.db`.
