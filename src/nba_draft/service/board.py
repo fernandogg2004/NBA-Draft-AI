@@ -156,3 +156,37 @@ def build_demo_service(seed: int = 42) -> tuple[DraftBoardService, pl.DataFrame]
         ("Prospect " + pl.col("player_id").cast(pl.Utf8)).alias("full_name")
     )
     return service, pool
+
+
+def build_service_from_table(
+    train_table: pl.DataFrame,
+    feature_cols: list[str],
+    *,
+    target_col: str = "peak_impact",
+    seed: int = 42,
+) -> DraftBoardService:
+    """Build a DraftBoardService trained on a REAL modeling table (not the synthetic fixture).
+
+    Trains the impact regressor + uncertainty ensemble on the table's reached players (rows with a
+    non-null target). Point this at the master/real table to serve real prospects via the API or
+    dashboard. The fold preprocessor is fit on the training rows only.
+    """
+    train = train_table.filter(pl.col(target_col).is_not_null())
+    if train.height < 2:
+        raise ValueError("Need at least 2 rows with a non-null target to train a service.")
+    pp = FoldPreprocessor(feature_cols).fit(train)
+    x_tr = pp.transform_matrix(train).to_numpy()
+    y_tr = train[target_col].to_numpy().astype(float)
+
+    impact_model = ridge_regressor(1.0)
+    impact_model.fit(x_tr, y_tr)
+    ensemble = BootstrapEnsemble(lambda: ridge_regressor(1.0), n_estimators=30, seed=seed)
+    ensemble.fit(x_tr, y_tr)
+    return DraftBoardService(
+        preprocessor=pp,
+        impact_model=impact_model,
+        ensemble=ensemble,
+        feature_cols=feature_cols,
+        background=x_tr,
+        name_col="player_id",
+    )

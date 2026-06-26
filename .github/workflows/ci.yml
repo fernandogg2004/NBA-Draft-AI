@@ -37,5 +37,5 @@ jobs:
       - name: Mypy (strict types)
         run: mypy
 
-      - name: Pytest
-        run: pytest
+      - name: Pytest (with coverage gate)
+        run: pytest --cov=src/nba_draft --cov-report=term-missing --cov-fail-under=85

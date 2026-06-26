@@ -105,6 +105,7 @@ def build_real_modeling_table(
     data_through_year: int,
     cbd_seasons: pl.DataFrame | None = None,
     ages: pl.DataFrame | None = None,
+    honors: dict[int, tuple[int, int]] | None = None,
     cfg: Any | None = None,
 ) -> pl.DataFrame:
     """One row per drafted player: Combine features + pick + real outcome labels + resolved flag.
@@ -113,11 +114,15 @@ def build_real_modeling_table(
     Train only on resolved rows; for the conditional impact target keep `reached` players.
     """
     cfg = cfg or load_target_config()
-    outcomes = build_player_outcomes(player_seasons, draft_history)
+    outcomes = build_player_outcomes(player_seasons, draft_history, honors=honors)
 
     label_rows: list[dict[str, object]] = []
     for pid, out in outcomes.items():
         peak = peak_impact(out, cfg)
+        last_year = max((s.season_year for s in out.seasons), default=None)
+        # Longevity: career length (seasons) + event flag. A career is "observed ended" if the
+        # last season precedes the latest data year (player no longer active); else right-censored.
+        career_ended = last_year is not None and last_year < data_through_year
         label_rows.append(
             {
                 "player_id": pid,
@@ -126,6 +131,8 @@ def build_real_modeling_table(
                 "cumulative_value": cumulative_value(out, cfg),
                 "outcome_tier": outcome_tier(out, cfg).value,
                 "resolved": is_label_resolved(out, data_through_year, cfg),
+                "career_seasons": len(out.seasons),
+                "career_ended": career_ended,
             }
         )
     labels = pl.DataFrame(label_rows)
@@ -155,9 +162,45 @@ class RealPipelineResult:
     hurdle_cv_spearman: float = float("nan")
     hurdle_holdout_spearman: float = float("nan")
     baseline_holdout_spearman: float = float("nan")
+    longevity_concordance: float = float("nan")
     holdout_years: tuple[int, ...] = ()
     model_version: str = ""
     summary_path: str = ""
+
+
+def _evaluate_longevity(
+    dev: pl.DataFrame, holdout: pl.DataFrame, feature_cols: list[str]
+) -> float:
+    """Cox PH career-length model over players who reached the NBA; holdout concordance (or NaN).
+
+    Censoring-aware (career_ended = event). Returns NaN for degenerate cases (too few players or a
+    single event class), which is common on tiny synthetic data.
+    """
+    from nba_draft.models.survival import CoxSurvivalModel, concordance
+    from nba_draft.validation import FoldPreprocessor
+
+    dev_play = dev.filter(pl.col("career_seasons") >= 1)
+    ho_play = holdout.filter(pl.col("career_seasons") >= 1)
+    if dev_play.height < 10 or ho_play.height < 3 or dev_play["career_ended"].n_unique() < 2:
+        return float("nan")
+    pp = FoldPreprocessor(feature_cols).fit(dev_play)
+    dev_t = pp.transform(dev_play).with_columns(
+        pl.col("career_seasons").cast(pl.Float64).alias("duration"),
+        pl.col("career_ended").cast(pl.Int64).alias("event"),
+    )
+    try:
+        cox = CoxSurvivalModel(penalizer=0.5).fit(
+            dev_t, feature_cols=feature_cols, duration_col="duration", event_col="event"
+        )
+        risk = cox.predict_risk(pp.transform(ho_play))
+        return concordance(
+            ho_play["career_seasons"].to_numpy().astype(float),
+            ho_play["career_ended"].to_numpy().astype(float),
+            risk,
+        )
+    except Exception as exc:  # noqa: BLE001 - degenerate Cox fits should not break the pipeline
+        log.warning("longevity Cox failed: %s", exc)
+        return float("nan")
 
 
 def evaluate_real_models(
@@ -272,11 +315,17 @@ def evaluate_real_models(
         base_holdout = spearman_corr(
             realized_ho, base.predict(holdout.select([PICK_COLUMN]).to_numpy().astype(float))
         )
+
+        # LONGEVITY (career length) via Cox PH over players who reached the NBA. Censoring-aware:
+        # report concordance on the holdout. Degenerate cases (too few / single event class) -> NaN.
+        longevity_c = _evaluate_longevity(dev, holdout, feature_cols)
+
         tracker.log_metrics(
             {
                 "hurdle_cv_spearman": hurdle_cv_spearman,
                 "hurdle_holdout_spearman": float(hurdle_holdout),
                 "baseline_holdout_spearman": float(base_holdout),
+                "longevity_concordance": float(longevity_c),
             }
         )
 
@@ -301,10 +350,12 @@ def evaluate_real_models(
             "hurdle_cv_spearman": hurdle_cv_spearman,
             "hurdle_holdout_spearman": float(hurdle_holdout),
             "baseline_holdout_spearman": float(base_holdout),
+            "longevity_concordance": float(longevity_c),
             "model_version": version,
             "note": (
                 "Production ranking = survivorship-robust hurdle (reach × impact). Headline is the "
-                "UNTOUCHABLE-HOLDOUT Spearman; tuning/CV never see the holdout."
+                "UNTOUCHABLE-HOLDOUT Spearman; tuning/CV never see the holdout. Longevity = Cox PH "
+                "career-length concordance on the holdout."
             ),
         }
         summary_path = out / "real_run_summary.json"
@@ -316,6 +367,7 @@ def evaluate_real_models(
         hurdle_cv_spearman=hurdle_cv_spearman,
         hurdle_holdout_spearman=float(hurdle_holdout),
         baseline_holdout_spearman=float(base_holdout),
+        longevity_concordance=float(longevity_c),
         holdout_years=split.holdout_years,
         model_version=version,
         summary_path=str(summary_path),

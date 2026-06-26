@@ -21,6 +21,7 @@ from nba_draft.targets.definitions import (
     reached_role,
     unconditional_value,
 )
+from nba_draft.targets.honors import honors_from_frame, load_honors
 from nba_draft.targets.impact import (
     add_impact_metrics,
     estimated_bpm,
@@ -38,6 +39,8 @@ __all__ = [
     "build_labels_frame",
     "build_player_outcomes",
     "cumulative_value",
+    "honors_from_frame",
+    "load_honors",
     "estimated_bpm",
     "is_label_resolved",
     "load_target_config",

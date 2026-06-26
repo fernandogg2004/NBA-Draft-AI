@@ -62,6 +62,12 @@ Target = peak impact (eBPM) over the first 4 NBA seasons, *conditional on reachi
 role. Evaluation is strictly temporal (train on older classes, test on newer ones). These numbers
 are **indicative, not precise** — see [caveats](#limitations--honest-caveats).
 
+> **Note (post-audit).** The numbers above are from an earlier *conditional-impact* run and are
+> kept as historical context. The production pipeline now ranks all prospects by the
+> **survivorship-robust hurdle** (`P(reach) × E(impact|reached) + (1−P)·replacement`) and reports
+> the headline on an **untouchable holdout** that tuning/CV never see — so re-run
+> `scripts/run_real_pipeline.py` to get current, unbiased hurdle-on-holdout figures.
+
 ---
 
 ## How it works

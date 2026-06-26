@@ -9,7 +9,13 @@ score a prospect's fit with a specific roster. Kept framework-free so it is unit
 from nba_draft.service.board import (
     DraftBoardService,
     build_demo_service,
+    build_service_from_table,
     prospect_to_player,
 )
 
-__all__ = ["DraftBoardService", "build_demo_service", "prospect_to_player"]
+__all__ = [
+    "DraftBoardService",
+    "build_demo_service",
+    "build_service_from_table",
+    "prospect_to_player",
+]

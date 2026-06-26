@@ -35,6 +35,7 @@ def build_player_outcomes(
     draft_history: pl.DataFrame,
     *,
     bpm_col: str = "ebpm",
+    honors: dict[int, tuple[int, int]] | None = None,
 ) -> dict[int, PlayerOutcome]:
     """Assemble {player_id: PlayerOutcome} from per-season production + draft slots.
 
@@ -42,6 +43,8 @@ def build_player_outcomes(
         player_seasons: rows with player_id, season, minutes, `bpm_col`, vorp.
         draft_history: rows with player_id, draft_year.
         bpm_col: which column holds the (estimated) BPM.
+        honors: optional {player_id: (all_star_count, all_nba_count)} to drive the top tiers;
+            defaults to zero (BPM-band fallback) when absent.
     """
     seasons_by_player: dict[int, list[SeasonStat]] = {}
     for row in player_seasons.iter_rows(named=True):
@@ -55,17 +58,19 @@ def build_player_outcomes(
             )
         )
 
+    honors = honors or {}
     outcomes: dict[int, PlayerOutcome] = {}
     for row in draft_history.iter_rows(named=True):
         pid = int(row["player_id"])
         seasons = tuple(sorted(seasons_by_player.get(pid, []), key=lambda s: s.season_year))
         debut = seasons[0].season_year if seasons else None
+        all_star, all_nba = honors.get(pid, (0, 0))
         outcomes[pid] = PlayerOutcome(
             draft_year=int(row["draft_year"]),
             debut_year=debut,
             seasons=seasons,
-            all_star_count=0,   # honors not sourced from nba_api here
-            all_nba_count=0,
+            all_star_count=all_star,
+            all_nba_count=all_nba,
         )
     return outcomes
 

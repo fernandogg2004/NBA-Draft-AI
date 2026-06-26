@@ -113,3 +113,34 @@ def test_fit_endpoint(client):
     body = r.json()
     assert "narrative" in body and body["exploratory"] is True
     assert "Net Rating goes from" in body["narrative"]
+
+
+# ----------------------------------------------------------------- real-data service builder
+def test_build_service_from_table_ranks_real_prospects():
+    import numpy as np
+    import polars as pl
+
+    from nba_draft.service import build_service_from_table
+
+    rng = np.random.default_rng(0)
+    n = 60
+    skill = rng.normal(size=n)
+    table = pl.DataFrame(
+        {
+            "player_id": list(range(n)),
+            "full_name": [f"P{i}" for i in range(n)],
+            "f_skill": skill + rng.normal(scale=0.2, size=n),
+            "f_noise": rng.normal(size=n),
+            "peak_impact": 2.0 * skill + rng.normal(scale=0.3, size=n),
+        }
+    )
+    feats = ["f_skill", "f_noise"]
+    service = build_service_from_table(table, feats, target_col="peak_impact")
+    board = service.rank(table)
+    assert board.height == n
+    for col in ("projected_impact", "floor", "ceiling"):
+        assert col in board.columns
+    # ranking carries signal: projection correlates with the latent skill
+    merged = board.join(table.select("player_id", "f_skill"), on="player_id")
+    corr = np.corrcoef(merged["projected_impact"].to_numpy(), merged["f_skill"].to_numpy())[0, 1]
+    assert corr > 0.5

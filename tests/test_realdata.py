@@ -91,6 +91,8 @@ def _synthetic_real_table(seed: int = 0) -> pl.DataFrame:
             reached = skill + rng.normal(scale=0.4) > -0.2
             peak = float(2.0 * skill + rng.normal(scale=0.5)) if reached else None
             pick_score = -skill + rng.normal(scale=0.6)
+            # career length grows with skill; ~70% of careers are observed-ended (rest censored)
+            career = int(np.clip(4 + 3 * skill + rng.normal(scale=1.0), 1, 18)) if reached else 0
             rows.append(
                 {
                     "player_id": pid,
@@ -100,6 +102,8 @@ def _synthetic_real_table(seed: int = 0) -> pl.DataFrame:
                     "reached": reached,
                     "peak_impact": peak,
                     "resolved": True,
+                    "career_seasons": career,
+                    "career_ended": bool(reached and rng.random() < 0.7),
                     "f_skill": skill + float(rng.normal(scale=0.3)),
                     "f_noise": float(rng.normal()),
                 }
@@ -127,6 +131,9 @@ def test_evaluate_real_models_hurdle_holdout(tmp_path):
     assert np.isfinite(result.hurdle_holdout_spearman)
     assert result.hurdle_holdout_spearman > 0.2
     assert np.isfinite(result.baseline_holdout_spearman)
+    # longevity (Cox) concordance is computed on the holdout and beats chance
+    assert np.isfinite(result.longevity_concordance)
+    assert result.longevity_concordance > 0.5
     # summary written + model registered
     summary = json.loads((tmp_path / "rp" / "real_run_summary.json").read_text())
     assert summary["holdout_years"] == [2019, 2020]
