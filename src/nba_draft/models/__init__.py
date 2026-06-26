@@ -9,6 +9,7 @@ import light and free of optional-dependency import cycles.
 
 from nba_draft.models.base import Estimator
 from nba_draft.models.baseline import DraftPositionBaseline, DraftPositionEstimator
+from nba_draft.models.hurdle import HurdleModel, realized_value
 from nba_draft.models.zoo import (
     ProbaAdapter,
     elasticnet_regressor,
@@ -24,7 +25,9 @@ __all__ = [
     "DraftPositionBaseline",
     "DraftPositionEstimator",
     "Estimator",
+    "HurdleModel",
     "ProbaAdapter",
+    "realized_value",
     "elasticnet_regressor",
     "gbm_classifier",
     "gbm_regressor",

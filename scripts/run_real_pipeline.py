@@ -35,18 +35,16 @@ def main() -> None:
         log.warning("CBD_API_KEY not set -> running with Combine+pick only (no college features).")
     result = run_real_pipeline(
         ing, draft_years=DRAFT_YEARS, outcome_seasons=OUTCOME_SEASONS,
-        cbd_ingester=cbd, min_train_years=4, tune=True, n_trials=30,
+        cbd_ingester=cbd, min_train_years=4, n_holdout_years=2, tune=True, n_trials=30,
     )
     log.info(
-        "drafted=%d  trainable=%d  model=%s",
-        result.n_drafted, result.n_trainable, result.model_version,
+        "drafted=%d  resolved=%d  model=%s  holdout=%s",
+        result.n_drafted, result.n_resolved, result.model_version, result.holdout_years,
     )
-    log.info("Models vs draft-position baseline (target = peak eBPM, conditional on reaching):")
-    for row in sorted(result.comparison, key=lambda r: -r["spearman_mean"]):
-        log.info(
-            "  %-18s spearman=%.3f rmse=%.3f",
-            row["model"], row["spearman_mean"], row["rmse_mean"],
-        )
+    log.info("Survivorship-robust HURDLE ranking (target = realized value over ALL prospects):")
+    log.info("  hurdle    CV spearman      = %.3f", result.hurdle_cv_spearman)
+    log.info("  hurdle    HOLDOUT spearman = %.3f  (headline)", result.hurdle_holdout_spearman)
+    log.info("  baseline  HOLDOUT spearman = %.3f", result.baseline_holdout_spearman)
     log.info("summary -> %s", result.summary_path)
 
 

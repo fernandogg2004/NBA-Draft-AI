@@ -12,7 +12,9 @@ from typing import Any
 
 import polars as pl
 
-from nba_draft.validation.runner import walk_forward_evaluate
+# NOTE: import walk_forward_evaluate lazily inside compare_models. evaluation.runner-style code
+# and validation.runner both reference evaluation.metrics, so a top-level import here creates a
+# circular import (evaluation.__init__ -> comparison -> validation.runner -> evaluation.metrics).
 
 
 def compare_models(
@@ -34,6 +36,8 @@ def compare_models(
     Returns:
         One row per model with the standard aggregate metrics, sorted by `primary_metric` desc.
     """
+    from nba_draft.validation.runner import walk_forward_evaluate
+
     rows: list[dict[str, object]] = []
     for name, spec in specs.items():
         report = walk_forward_evaluate(

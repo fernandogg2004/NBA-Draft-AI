@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -151,10 +151,171 @@ def build_real_modeling_table(
 @dataclass
 class RealPipelineResult:
     n_drafted: int
-    n_trainable: int
-    comparison: list[dict[str, Any]] = field(default_factory=list)
+    n_resolved: int
+    hurdle_cv_spearman: float = float("nan")
+    hurdle_holdout_spearman: float = float("nan")
+    baseline_holdout_spearman: float = float("nan")
+    holdout_years: tuple[int, ...] = ()
     model_version: str = ""
     summary_path: str = ""
+
+
+def evaluate_real_models(
+    table: pl.DataFrame,
+    feature_cols: list[str],
+    *,
+    output_root: str | Path = "artifacts/real_pipeline",
+    model_root: str | Path = "artifacts/models",
+    min_train_years: int = 4,
+    n_holdout_years: int = 2,
+    tune: bool = True,
+    n_trials: int = 30,
+    tracking_enabled: bool = False,
+) -> RealPipelineResult:
+    """Hurdle modeling + honest evaluation on a real modeling table (offline-testable).
+
+    Ranks ALL resolved prospects by unconditional EV (reach × impact + replacement), evaluated via
+    temporal walk-forward on the DEV set and — for the unbiased headline — on an untouchable
+    HOLDOUT of the most-recent classes that is never seen during tuning or CV. The draft-position
+    baseline is scored on the same holdout for context. The fitted HurdleModel is registered.
+    """
+    import json
+
+    from nba_draft.evaluation.metrics import spearman_corr
+    from nba_draft.mlops.registry import register_model
+    from nba_draft.mlops.tracking import ExperimentTracker
+    from nba_draft.models import DraftPositionEstimator, gbm_regressor, logistic_classifier
+    from nba_draft.models.hurdle import REPLACEMENT_BPM, HurdleModel, realized_value
+    from nba_draft.validation import (
+        FoldPreprocessor,
+        make_data_split,
+        walk_forward_hurdle_evaluate,
+    )
+
+    out = Path(output_root)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Resolved prospects only (label fully observed). "Reached" requires a stable peak so the
+    # impact head has a real value; everyone else is scored at replacement in `realized`.
+    resolved = table.filter(pl.col("resolved")).with_columns(
+        (pl.col("reached") & pl.col(TARGET_COLUMN).is_not_null()).cast(pl.Float64).alias("reach01"),
+        pl.col(TARGET_COLUMN).alias("impact"),
+    )
+    resolved = resolved.with_columns(
+        pl.Series(
+            "realized",
+            realized_value(resolved["reach01"].to_numpy(), resolved["impact"].to_numpy()),
+        )
+    )
+    split = make_data_split(resolved, year_col=YEAR_COLUMN, n_holdout_years=n_holdout_years)
+    dev, holdout = split.dev, split.holdout
+    log.info(
+        "resolved=%d dev=%d holdout=%d (years %s) features=%d",
+        resolved.height, dev.height, holdout.height, split.holdout_years, len(feature_cols),
+    )
+
+    # Tune the impact head on DEV's reached subset only (never the holdout) — fixes selection bias.
+    best_params: dict[str, Any] = {}
+    dev_reached = dev.filter(pl.col("reach01") > 0.5)
+    if tune and dev_reached["draft_year"].n_unique() > min_train_years:
+        from nba_draft.models.tuning import tune_estimator
+
+        best_params = tune_estimator(
+            dev_reached, feature_cols=feature_cols, target_col="impact", year_col=YEAR_COLUMN,
+            build_fn=gbm_regressor,
+            param_space={
+                "n_estimators": ("int", 100, 600, False),
+                "learning_rate": ("float", 0.01, 0.2, True),
+                "max_depth": ("int", 2, 5, False),
+            },
+            preprocessor_factory=lambda: FoldPreprocessor(feature_cols),
+            min_train_years=min_train_years, n_trials=n_trials, seed=42,
+        ).best_params
+
+    def _impact_factory() -> Any:
+        return gbm_regressor(**best_params) if best_params else gbm_regressor()
+
+    with ExperimentTracker(run_name="real-hurdle", enabled=tracking_enabled) as tracker:
+        # DEV walk-forward CV of the hurdle ranking.
+        hurdle_cv = walk_forward_hurdle_evaluate(
+            dev, feature_cols=feature_cols, reached_col="reach01", impact_col="impact",
+            realized_col="realized", preprocessor_factory=lambda: FoldPreprocessor(feature_cols),
+            reach_factory=logistic_classifier, impact_factory=_impact_factory,
+            replacement=REPLACEMENT_BPM, min_train_years=min_train_years,
+        )
+        hurdle_cv_spearman = float(hurdle_cv.aggregate["spearman_mean"])
+
+        # Fit the final hurdle on ALL dev, evaluate on the untouchable holdout (unbiased headline).
+        pp = FoldPreprocessor(feature_cols).fit(dev)
+        x_dev = pp.transform_matrix(dev).to_numpy()
+        hurdle = HurdleModel(
+            reach_factory=logistic_classifier, impact_factory=_impact_factory,
+            replacement=REPLACEMENT_BPM,
+        ).fit(
+            x_dev,
+            dev["reach01"].to_numpy().astype(float),
+            dev["impact"].to_numpy().astype(float),
+        )
+        x_ho = pp.transform_matrix(holdout).to_numpy()
+        realized_ho = holdout["realized"].to_numpy().astype(float)
+        hurdle_holdout = spearman_corr(realized_ho, hurdle.predict(x_ho))
+
+        # Draft-position baseline on the same holdout.
+        base = DraftPositionEstimator(0).fit(
+            dev.select([PICK_COLUMN]).to_numpy().astype(float),
+            dev["realized"].to_numpy().astype(float),
+        )
+        base_holdout = spearman_corr(
+            realized_ho, base.predict(holdout.select([PICK_COLUMN]).to_numpy().astype(float))
+        )
+        tracker.log_metrics(
+            {
+                "hurdle_cv_spearman": hurdle_cv_spearman,
+                "hurdle_holdout_spearman": float(hurdle_holdout),
+                "baseline_holdout_spearman": float(base_holdout),
+            }
+        )
+
+        version = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+        register_model(
+            hurdle, name="real_hurdle", version=version,
+            metrics={
+                "hurdle_cv_spearman": hurdle_cv_spearman,
+                "hurdle_holdout_spearman": float(hurdle_holdout),
+                "baseline_holdout_spearman": float(base_holdout),
+            },
+            feature_cols=feature_cols, root=model_root,
+        )
+
+        summary = {
+            "created_at": datetime.now(UTC).isoformat(),
+            "n_drafted": table.height,
+            "n_resolved": resolved.height,
+            "holdout_years": list(split.holdout_years),
+            "n_features": len(feature_cols),
+            "gbm_tuned_params": best_params,
+            "hurdle_cv_spearman": hurdle_cv_spearman,
+            "hurdle_holdout_spearman": float(hurdle_holdout),
+            "baseline_holdout_spearman": float(base_holdout),
+            "model_version": version,
+            "note": (
+                "Production ranking = survivorship-robust hurdle (reach × impact). Headline is the "
+                "UNTOUCHABLE-HOLDOUT Spearman; tuning/CV never see the holdout."
+            ),
+        }
+        summary_path = out / "real_run_summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+
+    return RealPipelineResult(
+        n_drafted=table.height,
+        n_resolved=resolved.height,
+        hurdle_cv_spearman=hurdle_cv_spearman,
+        hurdle_holdout_spearman=float(hurdle_holdout),
+        baseline_holdout_spearman=float(base_holdout),
+        holdout_years=split.holdout_years,
+        model_version=version,
+        summary_path=str(summary_path),
+    )
 
 
 def run_real_pipeline(
@@ -168,25 +329,15 @@ def run_real_pipeline(
     n_trials: int = 30,
     output_root: str | Path = "artifacts/real_pipeline",
     model_root: str | Path = "artifacts/models",
-    min_train_years: int = 2,
+    min_train_years: int = 4,
+    n_holdout_years: int = 2,
     tracking_enabled: bool = False,
 ) -> RealPipelineResult:
-    """End-to-end on real data: pull → labels → temporal eval → train → register.
+    """End-to-end on real data: pull → labels → hurdle CV + holdout eval → register.
 
-    If `cbd_ingester` is provided, real pre-draft college production features are pulled and joined
-    (the input that gives a model a genuine shot at beating the draft-position baseline).
+    Pull/build are env-pending (need a residential IP + `CBD_API_KEY`); the modeling/evaluation is
+    delegated to `evaluate_real_models`, which is unit-tested offline.
     """
-    import json
-
-    from nba_draft.evaluation.comparison import compare_models, make_spec
-    from nba_draft.mlops.registry import register_model
-    from nba_draft.mlops.tracking import ExperimentTracker
-    from nba_draft.models import DraftPositionEstimator, gbm_regressor, ridge_regressor
-    from nba_draft.validation import FoldPreprocessor
-
-    out = Path(output_root)
-    out.mkdir(parents=True, exist_ok=True)
-
     frames = pull_real_frames(
         ingester, draft_years=draft_years, outcome_seasons=outcome_seasons,
         cbd_ingester=cbd_ingester,
@@ -196,119 +347,14 @@ def run_real_pipeline(
         frames.draft_history, frames.combine, frames.player_seasons,
         data_through_year=frames.data_through_year, cbd_seasons=frames.cbd_seasons, ages=ages,
     )
+    # Production features fuse the draft-pick consensus WITH public data, used in BOTH hurdle heads.
     feats = (
-        COMBINE_FEATURES
+        [PICK_COLUMN, *COMBINE_FEATURES]
         + (COLLEGE_FEATURE_COLUMNS if frames.cbd_seasons is not None else [])
         + (AGE_FEATURE_COLUMNS if ages is not None else [])
     )
-    # Conditional-impact training set: resolved labels with a stable peak (the hurdle's Part B).
-    trainable = table.filter(
-        pl.col("resolved") & pl.col("reached") & pl.col(TARGET_COLUMN).is_not_null()
-    )
-    log.info(
-        "drafted=%d trainable(resolved&reached)=%d features=%d (college=%s)",
-        table.height, trainable.height, len(feats), frames.cbd_seasons is not None,
-    )
-
-    specs = {
-        "baseline_draftpos": make_spec(
-            [PICK_COLUMN], lambda: DraftPositionEstimator(0),
-            lambda: FoldPreprocessor([PICK_COLUMN]),
-        ),
-        "ridge_features": make_spec(
-            feats, lambda: ridge_regressor(1.0), lambda: FoldPreprocessor(feats)
-        ),
-        "gbm_features": make_spec(feats, gbm_regressor, lambda: FoldPreprocessor(feats)),
-    }
-
-    # Optuna-tune the GBM inside the temporal CV; add the tuned config as another contender.
-    best_params: dict[str, Any] = {}
-    if tune:
-        from nba_draft.models.tuning import tune_estimator
-
-        tuning = tune_estimator(
-            trainable, feature_cols=feats, target_col=TARGET_COLUMN, year_col=YEAR_COLUMN,
-            build_fn=gbm_regressor,
-            param_space={
-                "n_estimators": ("int", 100, 600, False),
-                "learning_rate": ("float", 0.01, 0.2, True),
-                "max_depth": ("int", 2, 5, False),
-            },
-            preprocessor_factory=lambda: FoldPreprocessor(feats),
-            min_train_years=min_train_years, n_trials=n_trials, seed=42,
-        )
-        best_params = tuning.best_params
-        log.info("GBM tuned: %s (cv spearman=%.3f)", best_params, tuning.best_value)
-        specs["gbm_tuned"] = make_spec(
-            feats, lambda: gbm_regressor(**best_params), lambda: FoldPreprocessor(feats)
-        )
-
-    # PRODUCTION models: fuse the consensus (draft pick) WITH the public data. A deployable tool
-    # uses both — the draft slot encodes scouting the box score can't, and the data adds what the
-    # board under-weights. (Pick is known at draft time, so it's a valid feature; at inference you
-    # score a prospect at a candidate slot.)
-    prod_feats = [PICK_COLUMN, *feats]
-    gbm_factory = (lambda: gbm_regressor(**best_params)) if best_params else gbm_regressor
-    specs["production_ridge"] = make_spec(
-        prod_feats, lambda: ridge_regressor(1.0), lambda: FoldPreprocessor(prod_feats)
-    )
-    specs["production_gbm"] = make_spec(
-        prod_feats, gbm_factory, lambda: FoldPreprocessor(prod_feats)
-    )
-
-    with ExperimentTracker(run_name="real-pipeline", enabled=tracking_enabled) as tracker:
-        comparison = compare_models(
-            trainable, specs, target_col=TARGET_COLUMN, year_col=YEAR_COLUMN,
-            min_train_years=min_train_years, baseline_name="baseline_draftpos",
-        )
-        tracker.log_metrics({"n_trainable": float(trainable.height)})
-
-        # Register the best non-baseline model by CV Spearman, fit on all trainable using its
-        # OWN feature set + preprocessor (data-only and production models use different columns).
-        ranked = comparison.filter(pl.col("model") != "baseline_draftpos")
-        best_name = str(ranked["model"][0])
-        best_spearman = float(ranked["spearman_mean"][0])
-        best_spec = specs[best_name]
-        best_feats = list(best_spec["feature_cols"])
-        pp = best_spec["preprocessor_factory"]().fit(trainable)
-        x = pp.transform_matrix(trainable).to_numpy()
-        y = trainable[TARGET_COLUMN].to_numpy().astype(float)
-        model = best_spec["model_factory"]()
-        model.fit(x, y)
-        version = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-        register_model(
-            model, name="real_impact_regressor", version=version,
-            metrics={"n_trainable": float(trainable.height), "cv_spearman": best_spearman},
-            feature_cols=best_feats, data_version=best_name, root=model_root,
-        )
-
-        summary = {
-            "created_at": datetime.now(UTC).isoformat(),
-            "draft_years": draft_years,
-            "outcome_seasons": outcome_seasons,
-            "n_drafted": table.height,
-            "n_trainable": trainable.height,
-            "comparison": comparison.to_dicts(),
-            "model_version": version,
-            "best_model": best_name,
-            "best_cv_spearman": best_spearman,
-            "gbm_tuned_params": best_params,
-            "n_features": len(feats),
-            "college_features": frames.cbd_seasons is not None,
-            "note": (
-                "Real pre-draft features = Combine"
-                + (" + CollegeBasketballData production" if frames.cbd_seasons is not None
-                   else " + pick only (no college source)")
-                + ". International prospects lack college features (imputed)."
-            ),
-        }
-        summary_path = out / "real_run_summary.json"
-        summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
-
-    return RealPipelineResult(
-        n_drafted=table.height,
-        n_trainable=trainable.height,
-        comparison=comparison.to_dicts(),
-        model_version=version,
-        summary_path=str(summary_path),
+    return evaluate_real_models(
+        table, feats, output_root=output_root, model_root=model_root,
+        min_train_years=min_train_years, n_holdout_years=n_holdout_years,
+        tune=tune, n_trials=n_trials, tracking_enabled=tracking_enabled,
     )

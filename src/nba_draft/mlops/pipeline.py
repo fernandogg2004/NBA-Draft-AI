@@ -31,13 +31,19 @@ from nba_draft.data.fixtures import (
     make_synthetic_prospects,
 )
 from nba_draft.evaluation.comparison import compare_models, make_spec
+from nba_draft.evaluation.metrics import spearman_corr
 from nba_draft.mlops.drift import feature_drift_report
 from nba_draft.mlops.registry import register_model
 from nba_draft.mlops.tracking import ExperimentTracker
 from nba_draft.models import DraftPositionEstimator, gbm_regressor, mean_regressor, ridge_regressor
+from nba_draft.models.hurdle import REPLACEMENT_BPM, realized_value
 from nba_draft.utils.logging import get_logger
 from nba_draft.utils.seeds import set_global_seed
-from nba_draft.validation import FoldPreprocessor, make_data_split
+from nba_draft.validation import (
+    FoldPreprocessor,
+    make_data_split,
+    walk_forward_hurdle_evaluate,
+)
 
 log = get_logger("mlops.pipeline")
 
@@ -116,12 +122,49 @@ def run_pipeline(
             }
         )
 
+        # 2b. HURDLE ranking (survivorship-robust): rank ALL prospects by unconditional EV.
+        # reached := impact above replacement; realized := impact if reached else replacement.
+        def _with_hurdle_cols(frame: pl.DataFrame) -> pl.DataFrame:
+            reached = (pl.col(TARGET_COLUMN) > REPLACEMENT_BPM).cast(pl.Float64)
+            return frame.with_columns(
+                reached.alias("reached"),
+                pl.col(TARGET_COLUMN).alias("impact"),
+                pl.Series(
+                    "realized",
+                    realized_value(
+                        (frame[TARGET_COLUMN].to_numpy() > REPLACEMENT_BPM).astype(float),
+                        frame[TARGET_COLUMN].to_numpy(),
+                    ),
+                ),
+            )
+
+        dev_h = _with_hurdle_cols(dev)
+        hurdle = walk_forward_hurdle_evaluate(
+            dev_h, feature_cols=feats, reached_col="reached", impact_col="impact",
+            realized_col="realized", preprocessor_factory=lambda: FoldPreprocessor(feats),
+            min_train_years=mty,
+        )
+        tracker.log_metrics({"hurdle_spearman": float(hurdle.aggregate["spearman_mean"])})
+        log.info(
+            "Hurdle (unconditional EV) spearman=%.3f vs realized value",
+            hurdle.aggregate["spearman_mean"],
+        )
+
         # 3. train final impact model on the dev set
         pp = FoldPreprocessor(feats).fit(dev)
         x_tr = pp.transform_matrix(dev).to_numpy()
         y_tr = dev[TARGET_COLUMN].to_numpy().astype(float)
         model = ridge_regressor(1.0)
         model.fit(x_tr, y_tr)
+
+        # 3b. FINAL evaluation on the untouchable holdout (fit on dev, scored on locked classes).
+        x_ho = pp.transform_matrix(split.holdout).to_numpy()
+        holdout_pred = model.predict(x_ho)
+        holdout_spearman = spearman_corr(
+            split.holdout[TARGET_COLUMN].to_numpy(), holdout_pred
+        )
+        tracker.log_metrics({"holdout_spearman": float(holdout_spearman)})
+        log.info("FINAL holdout spearman=%.3f (years %s)", holdout_spearman, split.holdout_years)
 
         # 4. register the model with metrics + data lineage
         version = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
@@ -148,6 +191,9 @@ def run_pipeline(
             "model_name": "impact_regressor",
             "model_version": version,
             "comparison": comparison.to_dicts(),
+            "hurdle_spearman": float(hurdle.aggregate["spearman_mean"]),
+            "holdout_spearman": float(holdout_spearman),
+            "holdout_years": list(split.holdout_years),
             "drift": drift.to_dicts(),
         }
         summary_path = out / "run_summary.json"

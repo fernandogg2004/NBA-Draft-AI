@@ -11,6 +11,7 @@ from nba_draft.validation.runner import (
     default_metrics,
     make_data_split,
     walk_forward_evaluate,
+    walk_forward_hurdle_evaluate,
     walk_forward_predictions,
 )
 from nba_draft.validation.temporal import (
@@ -31,5 +32,6 @@ __all__ = [
     "make_data_split",
     "walk_forward_evaluate",
     "walk_forward_folds",
+    "walk_forward_hurdle_evaluate",
     "walk_forward_predictions",
 ]

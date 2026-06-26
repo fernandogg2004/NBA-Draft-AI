@@ -202,3 +202,83 @@ def walk_forward_predictions(
             )
         )
     return pl.concat(parts, how="diagonal_relaxed") if parts else pl.DataFrame()
+
+
+def walk_forward_hurdle_evaluate(
+    df: pl.DataFrame,
+    *,
+    feature_cols: list[str],
+    reached_col: str,
+    impact_col: str,
+    realized_col: str,
+    preprocessor_factory: Callable[[], FoldPreprocessor],
+    reach_factory: Callable[[], object] | None = None,
+    impact_factory: Callable[[], object] | None = None,
+    replacement: float = -2.0,
+    year_col: str = "draft_year",
+    min_train_years: int,
+    val_horizon_years: int = 1,
+    step_years: int = 1,
+    expanding: bool = True,
+) -> EvaluationReport:
+    """Temporal-CV evaluation of the HurdleModel over ALL prospects (reached or not).
+
+    Each fold fits the reach + impact heads on the train fold only and ranks the validation
+    prospects by unconditional EV, scored against the realized value (impact if reached, else
+    replacement). This measures the survivorship-robust ranking the system is meant to produce.
+    """
+    from nba_draft.models.hurdle import HurdleModel
+    from nba_draft.models.zoo import logistic_classifier, ridge_regressor
+
+    reach_f = reach_factory or logistic_classifier
+    impact_f = impact_factory or (lambda: ridge_regressor(1.0))
+    metrics = default_metrics()
+    years = df[year_col].to_numpy()
+    report = EvaluationReport()
+    scores: dict[str, list[float]] = {name: [] for name in metrics}
+
+    for i, fold in enumerate(
+        walk_forward_folds(
+            years,
+            min_train_years=min_train_years,
+            val_horizon_years=val_horizon_years,
+            step_years=step_years,
+            expanding=expanding,
+        )
+    ):
+        train_df = df[fold.train_idx.tolist()]
+        val_df = df[fold.val_idx.tolist()]
+
+        pp = preprocessor_factory().fit(train_df)
+        x_tr = pp.transform_matrix(train_df).to_numpy()
+        x_va = pp.transform_matrix(val_df).to_numpy()
+        if np.isnan(x_tr).any() or np.isnan(x_va).any():
+            raise ValueError(f"Fold {i}: feature matrix has nulls after preprocessing.")
+
+        model = HurdleModel(
+            reach_factory=reach_f, impact_factory=impact_f, replacement=replacement,
+        )
+        model.fit(
+            x_tr,
+            train_df[reached_col].to_numpy().astype(float),
+            train_df[impact_col].to_numpy().astype(float),
+        )
+        ev = np.asarray(model.predict(x_va), dtype=float)
+        realized = val_df[realized_col].to_numpy().astype(float)
+
+        fold_rec: dict[str, object] = {
+            "fold": i,
+            "train_years": fold.train_years,
+            "val_years": fold.val_years,
+            "n_val": int(val_df.height),
+        }
+        for name, fn in metrics.items():
+            val = float(fn(realized, ev))
+            fold_rec[name] = val
+            scores[name].append(val)
+        report.per_fold.append(fold_rec)
+
+    for name, vals in scores.items():
+        report.aggregate[f"{name}_mean"] = float(np.mean(vals)) if vals else float("nan")
+        report.aggregate[f"{name}_std"] = float(np.std(vals)) if vals else float("nan")
+    return report

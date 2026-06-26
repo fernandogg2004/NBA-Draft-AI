@@ -9,6 +9,7 @@ hurdle/tier labels). The join logic is pure and offline-testable; the pull step 
 from nba_draft.realdata.age import AGE_FEATURE_COLUMNS, age_at_draft, pull_player_ages
 from nba_draft.realdata.build import (
     build_real_modeling_table,
+    evaluate_real_models,
     pull_real_frames,
     run_real_pipeline,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "COLLEGE_FEATURE_COLUMNS",
     "age_at_draft",
     "build_real_modeling_table",
+    "evaluate_real_models",
     "link_college_features",
     "pull_player_ages",
     "pull_real_frames",
