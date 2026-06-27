@@ -14,14 +14,17 @@ from nba_draft.realdata.build import (
     run_real_pipeline,
 )
 from nba_draft.realdata.college import COLLEGE_FEATURE_COLUMNS, link_college_features
+from nba_draft.realdata.intl import INTL_FEATURE_COLUMNS, link_intl_features
 
 __all__ = [
     "AGE_FEATURE_COLUMNS",
     "COLLEGE_FEATURE_COLUMNS",
+    "INTL_FEATURE_COLUMNS",
     "age_at_draft",
     "build_real_modeling_table",
     "evaluate_real_models",
     "link_college_features",
+    "link_intl_features",
     "pull_player_ages",
     "pull_real_frames",
     "run_real_pipeline",

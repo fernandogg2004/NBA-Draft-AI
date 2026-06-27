@@ -71,6 +71,21 @@ This is the high-value input the nba_api-only path lacks. Steps:
 ingester (`CollegeBasketballDataIngester`) caches + rate-limits + records provenance like the
 nba_api one.
 
+## Add international pre-draft features (EuroLeague)
+
+For prospects who never played NCAA, EuroLeague production fills the same feature slots (a subset —
+fewer advanced metrics). Needs the `ingest` extra (`euroleague-api`), no key:
+
+```bash
+python scripts/verify_euroleague.py --season 2017   # prints live schema + canonical columns
+NBA_DRAFT_AI_INTL=1 python scripts/run_real_pipeline.py   # enables the EuroLeague ingester
+```
+
+EuroLeague column names vary by endpoint/version; the parser resolves them case-insensitively and
+`verify_euroleague.py` confirms the mapping (extend `_EL_CANDIDATES` in `ingestion/parse.py` if a
+stat is missing). International features are coalesced into the college-named columns, so a prospect
+gets NCAA *or* EuroLeague values; gaps are imputed.
+
 ## Configuration
 
 All knobs live in `config/*.yaml` (validated by `nba_draft.config` / per-module loaders):

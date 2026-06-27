@@ -23,7 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Phase 1 ingestion (network; run locally)
-ingest = ["requests>=2.31", "nba_api>=1.4"]
+ingest = ["requests>=2.31", "nba_api>=1.4", "euroleague-api>=0.0.13"]
 # Phase 3 EDA plotting
 eda = ["matplotlib>=3.8"]
 # Phase 6 modeling families

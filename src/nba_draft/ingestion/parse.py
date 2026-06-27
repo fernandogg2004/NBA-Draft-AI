@@ -205,3 +205,90 @@ def parse_player_season(base_json: str, advanced_json: str, season: str) -> pl.D
         per100("_blk").alias("blk_per100"),
         per100("_tov").alias("tov_per100"),
     ).drop("_pts", "_ast", "_oreb", "_dreb", "_reb", "_stl", "_blk", "_tov")
+
+
+# --- EuroLeague (international) -------------------------------------------------------------
+# Column names returned by euroleague_api vary by endpoint/version, so resolve them
+# case-insensitively against candidate lists. scripts/verify_euroleague.py prints the live schema.
+_EL_CANDIDATES: dict[str, list[str]] = {
+    "full_name": ["playerName", "player.name", "player_name", "player", "name"],
+    "season": ["season", "seasonCode", "season_code"],
+    "games": ["gamesPlayed", "games", "gp"],
+    "minutes": ["minutesPlayed", "minutes", "timePlayed", "min"],
+    "points": ["pointsScored", "points", "pts"],
+    "assists": ["assistances", "assists", "ast"],
+    "rebounds": ["totalRebounds", "rebounds", "reb"],
+    "steals": ["steals", "stl"],
+    "blocks": ["blocksFavour", "blocks", "blk"],
+    "turnovers": ["turnovers", "tov"],
+    "fga2": ["fieldGoalsAttempted2", "twoPointersAttempted"],
+    "fga3": ["fieldGoalsAttempted3", "threePointersAttempted"],
+    "fta": ["freeThrowsAttempted"],
+}
+
+
+def _norm_key(key: str) -> str:
+    return key.lower().replace(".", "").replace("_", "").replace(" ", "")
+
+
+def _resolve(row_norm: dict[str, Any], field: str) -> Any:
+    for cand in _EL_CANDIDATES[field]:
+        val = row_norm.get(_norm_key(cand))
+        if val is not None:
+            return val
+    return None
+
+
+def _season_to_int(value: Any) -> int | None:
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    return int(digits[:4]) if len(digits) >= 4 else (int(digits) if digits else None)
+
+
+def parse_euroleague_player_season(raw_json: str) -> pl.DataFrame:
+    """Parse euroleague_api player-season records (Accumulated mode) into canonical intl rows.
+
+    No possessions are available, so production is per-40-minutes; true shooting is derived when
+    shot attempts are present. Columns intentionally match the NCAA pre-draft feature names
+    (subset) so international players fill the SAME feature slots; missing metrics stay null.
+    """
+    records = json.loads(raw_json)
+    out: list[dict[str, object]] = []
+    for rec in records:
+        rn = {_norm_key(k): v for k, v in rec.items()}
+        minutes = _resolve(rn, "minutes") or 0.0
+
+        def per40(field: str, _min: float = float(minutes)) -> float | None:
+            v = _resolve(rn, field)  # noqa: B023 - intentional closure over rn
+            return float(v) / _min * 40.0 if _min and v is not None else None
+
+        pts = _resolve(rn, "points")
+        fga2, fga3, fta = _resolve(rn, "fga2"), _resolve(rn, "fga3"), _resolve(rn, "fta")
+        true_shooting: float | None = None
+        if pts is not None and None not in (fga2, fga3, fta):
+            denom = 2.0 * ((float(fga2) + float(fga3)) + 0.44 * float(fta))
+            true_shooting = float(pts) / denom if denom > 0 else None
+
+        out.append(
+            {
+                "full_name": _resolve(rn, "full_name"),
+                "season": _season_to_int(_resolve(rn, "season")),
+                "games": _resolve(rn, "games"),
+                "minutes": float(minutes),
+                "pts_per40": per40("points"),
+                "ast_per40": per40("assists"),
+                "reb_per40": per40("rebounds"),
+                "stl_per40": per40("steals"),
+                "blk_per40": per40("blocks"),
+                "tov_per40": per40("turnovers"),
+                "true_shooting": true_shooting,
+            }
+        )
+    schema = {
+        "full_name": pl.Utf8, "season": pl.Int64, "games": pl.Int64, "minutes": pl.Float64,
+        "pts_per40": pl.Float64, "ast_per40": pl.Float64, "reb_per40": pl.Float64,
+        "stl_per40": pl.Float64, "blk_per40": pl.Float64, "tov_per40": pl.Float64,
+        "true_shooting": pl.Float64,
+    }
+    if not out:
+        return pl.DataFrame({k: [] for k in schema}, schema=schema)
+    return pl.DataFrame(out, schema_overrides=schema)

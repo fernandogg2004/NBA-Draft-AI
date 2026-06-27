@@ -14,10 +14,12 @@ from nba_draft.ingestion.parse import (
     parse_cbd_player_season,
     parse_combine,
     parse_draft_history,
+    parse_euroleague_player_season,
     parse_player_season,
 )
 from nba_draft.realdata.age import AGE_FEATURE_COLUMNS, pull_player_ages
 from nba_draft.realdata.college import COLLEGE_FEATURE_COLUMNS, link_college_features
+from nba_draft.realdata.intl import INTL_FEATURE_COLUMNS, link_intl_features
 from nba_draft.targets import add_impact_metrics, build_player_outcomes
 from nba_draft.targets.definitions import (
     cumulative_value,
@@ -50,6 +52,7 @@ class RealFrames:
     player_seasons: pl.DataFrame
     data_through_year: int
     cbd_seasons: pl.DataFrame | None = None
+    intl_seasons: pl.DataFrame | None = None
 
 
 def pull_real_frames(
@@ -58,6 +61,7 @@ def pull_real_frames(
     draft_years: list[int],
     outcome_seasons: list[str],
     cbd_ingester: Any | None = None,
+    intl_ingester: Any | None = None,
 ) -> RealFrames:
     """Pull (cached) + parse the raw endpoints into the frames the table builder needs.
 
@@ -94,7 +98,17 @@ def pull_real_frames(
         ]
         cbd_seasons = pl.concat(cbd_parts, how="diagonal_relaxed")
 
-    return RealFrames(dh, combine, player_seasons, data_through, cbd_seasons)
+    intl_seasons = None
+    if intl_ingester is not None:
+        # International prospects' final pre-draft EuroLeague season ends in draft_year (code y-1)
+        # or draft_year; pull both years around each draft.
+        el_years = sorted({y - 1 for y in draft_years} | set(draft_years))
+        intl_parts = [
+            parse_euroleague_player_season(intl_ingester.player_season_stats(y)) for y in el_years
+        ]
+        intl_seasons = pl.concat(intl_parts, how="diagonal_relaxed")
+
+    return RealFrames(dh, combine, player_seasons, data_through, cbd_seasons, intl_seasons)
 
 
 def build_real_modeling_table(
@@ -104,6 +118,7 @@ def build_real_modeling_table(
     *,
     data_through_year: int,
     cbd_seasons: pl.DataFrame | None = None,
+    intl_seasons: pl.DataFrame | None = None,
     ages: pl.DataFrame | None = None,
     honors: dict[int, tuple[int, int]] | None = None,
     cfg: Any | None = None,
@@ -150,6 +165,15 @@ def build_real_modeling_table(
     if cbd_seasons is not None:
         college = link_college_features(draft_history, cbd_seasons)
         table = table.join(college, on="player_id", how="left")
+    if intl_seasons is not None:
+        intl = link_intl_features(draft_history, intl_seasons)
+        table = table.join(intl, on="player_id", how="left", suffix="_intl")
+        # Coalesce: keep the college value where present, else fall back to the international one.
+        overlap = [c for c in INTL_FEATURE_COLUMNS if f"{c}_intl" in table.columns]
+        if overlap:
+            table = table.with_columns(
+                [pl.coalesce([pl.col(c), pl.col(f"{c}_intl")]).alias(c) for c in overlap]
+            ).drop([f"{c}_intl" for c in overlap])
     if ages is not None:
         table = table.join(ages, on="player_id", how="left")
     return table.sort([YEAR_COLUMN, PICK_COLUMN])
@@ -380,6 +404,7 @@ def run_real_pipeline(
     draft_years: list[int],
     outcome_seasons: list[str],
     cbd_ingester: Any | None = None,
+    intl_ingester: Any | None = None,
     with_age: bool = True,
     tune: bool = True,
     n_trials: int = 30,
@@ -392,21 +417,25 @@ def run_real_pipeline(
     """End-to-end on real data: pull → labels → hurdle CV + holdout eval → register.
 
     Pull/build are env-pending (need a residential IP + `CBD_API_KEY`); the modeling/evaluation is
-    delegated to `evaluate_real_models`, which is unit-tested offline.
+    delegated to `evaluate_real_models`, which is unit-tested offline. `intl_ingester` (EuroLeague)
+    fills pre-draft features for international prospects who lack NCAA data.
     """
     frames = pull_real_frames(
         ingester, draft_years=draft_years, outcome_seasons=outcome_seasons,
-        cbd_ingester=cbd_ingester,
+        cbd_ingester=cbd_ingester, intl_ingester=intl_ingester,
     )
     ages = pull_player_ages(ingester, frames.draft_history) if with_age else None
     table = build_real_modeling_table(
         frames.draft_history, frames.combine, frames.player_seasons,
-        data_through_year=frames.data_through_year, cbd_seasons=frames.cbd_seasons, ages=ages,
+        data_through_year=frames.data_through_year, cbd_seasons=frames.cbd_seasons,
+        intl_seasons=frames.intl_seasons, ages=ages,
     )
     # Production features fuse the draft-pick consensus WITH public data, used in BOTH hurdle heads.
+    # College-named production columns are kept if EITHER NCAA or international data populates them.
+    has_production = frames.cbd_seasons is not None or frames.intl_seasons is not None
     feats = (
         [PICK_COLUMN, *COMBINE_FEATURES]
-        + (COLLEGE_FEATURE_COLUMNS if frames.cbd_seasons is not None else [])
+        + (COLLEGE_FEATURE_COLUMNS if has_production else [])
         + (AGE_FEATURE_COLUMNS if ages is not None else [])
     )
     return evaluate_real_models(

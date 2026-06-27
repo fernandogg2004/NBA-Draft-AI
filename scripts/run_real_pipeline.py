@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 
 from nba_draft.ingestion.college_bb_data import CollegeBasketballDataIngester
+from nba_draft.ingestion.euroleague import EuroLeagueIngester
 from nba_draft.ingestion.http import RateLimiter
 from nba_draft.ingestion.nba_stats import NbaStatsIngester
 from nba_draft.realdata import run_real_pipeline
@@ -33,9 +34,12 @@ def main() -> None:
     cbd = CollegeBasketballDataIngester("data/raw") if os.environ.get("CBD_API_KEY") else None
     if cbd is None:
         log.warning("CBD_API_KEY not set -> running with Combine+pick only (no college features).")
+    # International (EuroLeague) features for non-NCAA prospects; enable with NBA_DRAFT_AI_INTL=1.
+    intl = EuroLeagueIngester("data/raw") if os.environ.get("NBA_DRAFT_AI_INTL") else None
     result = run_real_pipeline(
         ing, draft_years=DRAFT_YEARS, outcome_seasons=OUTCOME_SEASONS,
-        cbd_ingester=cbd, min_train_years=4, n_holdout_years=2, tune=True, n_trials=30,
+        cbd_ingester=cbd, intl_ingester=intl, min_train_years=4, n_holdout_years=2,
+        tune=True, n_trials=30,
     )
     log.info(
         "drafted=%d  resolved=%d  model=%s  holdout=%s",

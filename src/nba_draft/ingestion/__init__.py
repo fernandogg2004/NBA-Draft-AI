@@ -13,6 +13,7 @@ from nba_draft.ingestion.college_bb_data import (
     CollegeBasketballDataIngester,
     MissingApiKeyError,
 )
+from nba_draft.ingestion.euroleague import EuroLeagueIngester
 from nba_draft.ingestion.http import (
     FetchBlockedError,
     PoliteClient,
@@ -23,6 +24,7 @@ from nba_draft.ingestion.parse import (
     parse_cbd_player_season,
     parse_combine,
     parse_draft_history,
+    parse_euroleague_player_season,
     parse_player_season,
 )
 from nba_draft.ingestion.provenance import Provenance, sha256_bytes
@@ -30,6 +32,7 @@ from nba_draft.ingestion.registry import Source, get_source, load_sources
 
 __all__ = [
     "CollegeBasketballDataIngester",
+    "EuroLeagueIngester",
     "FetchBlockedError",
     "FileCache",
     "MissingApiKeyError",
@@ -43,6 +46,7 @@ __all__ = [
     "parse_cbd_player_season",
     "parse_combine",
     "parse_draft_history",
+    "parse_euroleague_player_season",
     "parse_player_season",
     "sha256_bytes",
 ]
