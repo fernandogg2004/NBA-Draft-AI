@@ -95,14 +95,16 @@ def health() -> dict[str, str]:
 
 @app.get("/prospects")
 def prospects(limit: int = 30) -> list[dict[str, Any]]:
-    """Ranked draft board for the demo pool.
+    """Ranked draft board for the demo pool, enriched with a per-prospect profile.
 
     With the survivorship-robust hurdle attached, rows carry ``p_reach`` + ``projected_ev`` and
     the board is ranked by unconditional EV; otherwise by conditional ``projected_impact``. Each
-    row also has the 80% interval (floor/ceiling) and outcome-tier probabilities.
+    row also has the 80% interval (floor/ceiling), outcome-tier probabilities, a feature-derived
+    profile (functional ``skill_*`` ratings, ``archetype``, ``age``, ``wingspan_in``), and two
+    projection-derived fields (``peak_pctile``, ``projected_value_usd``).
     """
     service, pool = _service_and_pool()
-    board = service.rank(pool).head(limit)
+    board = service.ranked_with_profile(pool).head(limit)
     return board.to_dicts()
 
 

@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from nba_draft.fit import Player, TeamContext, load_cba
+from nba_draft.fit import SKILL_DIMS, Player, TeamContext, load_cba
 from nba_draft.service import build_demo_service, prospect_to_player
-from nba_draft.service.board import TIER_LABELS
+from nba_draft.service.board import _ARCHETYPE_BY_SKILL, TIER_LABELS
+
+_ARCHETYPE_LABELS = list(_ARCHETYPE_BY_SKILL.values())
 
 
 @pytest.fixture(scope="module")
@@ -56,6 +58,25 @@ def test_fit_for_team_uses_apron_pressure(service_and_pool):
     res = service.fit_for_team(row, over2, pick=8, cba=cba)
     assert res.exploratory is True
     assert "second apron" in res.apron_label
+
+
+def test_ranked_with_profile_adds_real_profile_fields(service_and_pool):
+    service, pool = service_and_pool
+    board = service.ranked_with_profile(pool)
+    assert board.height == pool.height
+    skill_cols = [f"skill_{d}" for d in SKILL_DIMS]
+    extra = ("archetype", "age", "wingspan_in", "peak_pctile", "projected_value_usd")
+    for col in (*skill_cols, *extra):
+        assert col in board.columns
+    # skills are 0-100 percentiles
+    skills = board.select(skill_cols).to_numpy()
+    assert skills.min() >= 0.0 and skills.max() <= 100.0
+    # peak percentile is a real 0..1 rank; the top prospect is at the max
+    assert ((board["peak_pctile"] > 0.0) & (board["peak_pctile"] <= 1.0)).all()
+    assert board.sort("projected_impact", descending=True)["peak_pctile"][0] == pytest.approx(1.0)
+    # projected $ value is non-negative and the archetype is one of the known labels
+    assert (board["projected_value_usd"] >= 0.0).all()
+    assert set(board["archetype"].unique()).issubset(set(_ARCHETYPE_LABELS))
 
 
 def test_counterfactual_lifts_a_low_prospect_toward_next_tier(service_and_pool):

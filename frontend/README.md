@@ -16,10 +16,11 @@ in Python.
 | `/compare` | Comparison | `GET /prospects` |
 
 Real model output now backs the SHAP attribution, the **counterfactual** ("what would lift this
-prospect to the next tier"), the **synergy sub-scores** (functional need / net / overlap), and the
-**lineup Net-Rating** before→after on Team Fit. Fields the model still doesn't expose (combine
-measurements, $ cumulative value, player photos, per-skill radar ratings) render as
-clearly-labeled placeholders.
+prospect to the next tier"), the **synergy sub-scores** (functional need / net / overlap), the
+**lineup Net-Rating** before→after, the **skill radar** + **archetype** (feature-derived), **age**,
+**wingspan**, **peak percentile** ("Top X%"), and **projected career value $**. The only remaining
+placeholders are fields genuinely absent from the served pool: standing/max vertical, lane agility,
+position, and player photos — each shown as a labeled "not measured".
 
 ## Run it
 

@@ -17,7 +17,9 @@ from nba_draft.fit import (
     load_cba,
     player_team_fit,
 )
+from nba_draft.fit.financial import projected_value_usd
 from nba_draft.fit.score import FitResult
+from nba_draft.fit.types import SKILL_DIMS
 from nba_draft.interpretability import ShapExplainer, greedy_counterfactual
 from nba_draft.models.hurdle import REPLACEMENT_BPM, HurdleModel
 from nba_draft.models.zoo import logistic_classifier, ridge_regressor
@@ -91,6 +93,25 @@ def prospect_to_player(name: str, row: dict[str, Any], impact: float) -> Player:
     )
 
 
+# Descriptive archetype = the prospect's dominant functional skill. Deterministic and
+# transparent (no clustering), so it is honest about being a simple label, not a model.
+_ARCHETYPE_BY_SKILL: dict[str, str] = {
+    "scoring": "Scorer",
+    "shooting_spacing": "Floor Spacer",
+    "playmaking": "Playmaker",
+    "rebounding": "Rebounder",
+    "rim_protection": "Rim Protector",
+    "perimeter_defense": "Perimeter Defender",
+}
+
+
+def archetype_from_skills(skills: dict[str, float]) -> str:
+    """Label a prospect by their strongest functional skill (descriptive, EXPLORATORY)."""
+    if not skills:
+        return "Unspecified"
+    return _ARCHETYPE_BY_SKILL[max(SKILL_DIMS, key=lambda d: skills.get(d, 0.0))]
+
+
 @dataclass
 class DraftBoardService:
     """Trained service powering the API and dashboard."""
@@ -140,6 +161,54 @@ class DraftBoardService:
                 pl.Series(f"p_{label}", [round(s[label], 4) for s in scenarios])
             )
         return out.sort(sort_col, descending=True)
+
+    def profile_table(self, prospects: pl.DataFrame) -> pl.DataFrame:
+        """Feature-derived prospect profile: functional skills, archetype, age, wingspan.
+
+        Skills use the same heuristic mapping as the fit module (``prospect_to_player``); the
+        archetype is the dominant skill. All EXPLORATORY (the skill mapping is illustrative).
+        Only columns actually present in the pool are emitted (e.g. wingspan/age may be absent
+        on a minimal real table), so the API surfaces real data and omits what it doesn't have.
+        """
+        rows: list[dict[str, Any]] = []
+        for r in prospects.iter_rows(named=True):
+            player = prospect_to_player(str(r.get("full_name", "")), dict(r), impact=0.0)
+            entry: dict[str, Any] = {
+                self.name_col: r.get(self.name_col),
+                "archetype": archetype_from_skills(player.skills),
+                **{f"skill_{k}": round(v, 1) for k, v in player.skills.items()},
+            }
+            if r.get("age") is not None:
+                entry["age"] = round(float(r["age"]), 1)
+            if r.get("wingspan_in") is not None:
+                entry["wingspan_in"] = round(float(r["wingspan_in"]), 1)
+            rows.append(entry)
+        return pl.DataFrame(rows)
+
+    def ranked_with_profile(
+        self, prospects: pl.DataFrame, *, cba: CBAConfig | None = None
+    ) -> pl.DataFrame:
+        """Ranked board joined with the feature-derived profile + two projection-derived fields.
+
+        Adds ``peak_pctile`` (percentile rank of the ranking metric within the pool; higher is
+        better) and ``projected_value_usd`` (team-independent $ value over the rookie window from
+        the projected impact). Powers the Draft Board / Prospect Detail / Comparison screens.
+        """
+        cba = cba or load_cba()
+        board = self.rank(prospects)
+        rank_col = "projected_ev" if "projected_ev" in board.columns else "projected_impact"
+        board = board.with_columns(
+            (pl.col(rank_col).rank() / pl.len()).round(4).alias("peak_pctile"),
+            pl.col("projected_impact")
+            .map_elements(
+                lambda v: round(projected_value_usd(max(0.0, float(v)), cba), 2),
+                return_dtype=pl.Float64,
+            )
+            .alias("projected_value_usd"),
+        )
+        if self.name_col in board.columns:
+            return board.join(self.profile_table(prospects), on=self.name_col, how="left")
+        return board
 
     def explain(self, prospect_row: pl.DataFrame) -> tuple[pl.DataFrame, float]:
         """Local SHAP explanation for a single prospect (lazily builds the explainer)."""

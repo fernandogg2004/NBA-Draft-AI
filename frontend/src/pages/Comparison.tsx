@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
-import { pct, signed } from "../lib/format";
+import { pct, signed, usdM } from "../lib/format";
 import { rankingValue, tierSlices } from "../lib/tiers";
-import type { ProspectRow } from "../lib/types";
+import { prospectSkills, SKILL_DIMS, type ProspectRow } from "../lib/types";
 import { Icon } from "../components/Icon";
 import { Card, Chip, ErrorState, Loading, Placeholder, SectionLabel } from "../components/ui";
 import { SkillRadar, TierBar } from "../components/charts";
@@ -43,6 +43,8 @@ export function Comparison() {
   if (board.error) return <ErrorState message={board.error} onRetry={board.reload} />;
   if (!rowA || !rowB) return <ErrorState message="Need two prospects to compare." />;
 
+  const skillsA = prospectSkills(rowA);
+  const skillsB = prospectSkills(rowB);
   const evA = rankingValue(rowA);
   const evB = rankingValue(rowB);
   const winner = evA >= evB ? rowA : rowB;
@@ -124,6 +126,17 @@ export function Comparison() {
           b={`${rowB.floor.toFixed(1)} / ${rowB.ceiling.toFixed(1)}`}
         />
         <MetricRow
+          label="Projected Value (rookie window)"
+          a={rowA.projected_value_usd != null ? usdM(rowA.projected_value_usd, false) : "—"}
+          b={rowB.projected_value_usd != null ? usdM(rowB.projected_value_usd, false) : "—"}
+          aWin={(rowA.projected_value_usd ?? 0) >= (rowB.projected_value_usd ?? 0)}
+        />
+        <MetricRow
+          label="Archetype"
+          a={rowA.archetype ?? "—"}
+          b={rowB.archetype ?? "—"}
+        />
+        <MetricRow
           label="System Fit Score"
           a={<Placeholder label="open Team Fit" />}
           b={<Placeholder label="open Team Fit" />}
@@ -137,29 +150,23 @@ export function Comparison() {
         <DistCell row={rowB} />
       </div>
 
-      {/* ---- Radar overlay ---- */}
-      <Card>
-        <div className="mb-2 flex items-center justify-between">
-          <SectionLabel>Skill Radar Comparison</SectionLabel>
-          <Chip tone="muted">illustrative — skills not yet in model</Chip>
-        </div>
-        <SkillRadar
-          height={320}
-          axes={["Scoring", "Shooting", "Playmaking", "Rebounding", "Rim Prot.", "Per. Def."]}
-          series={[
-            {
-              name: rowA.full_name,
-              color: "#ff6a2c",
-              values: { Scoring: 72, Shooting: 60, Playmaking: 64, Rebounding: 50, "Rim Prot.": 42, "Per. Def.": 58 },
-            },
-            {
-              name: rowB.full_name,
-              color: "#4f8cff",
-              values: { Scoring: 64, Shooting: 70, Playmaking: 52, Rebounding: 60, "Rim Prot.": 55, "Per. Def.": 66 },
-            },
-          ]}
-        />
-      </Card>
+      {/* ---- Radar overlay (feature-derived) ---- */}
+      {skillsA && skillsB && (
+        <Card>
+          <div className="mb-2 flex items-center justify-between">
+            <SectionLabel>Skill Radar Comparison</SectionLabel>
+            <Chip tone="muted">exploratory mapping</Chip>
+          </div>
+          <SkillRadar
+            height={320}
+            axes={SKILL_DIMS.map((d) => d.label)}
+            series={[
+              { name: rowA.full_name, color: "#ff6a2c", values: skillsA },
+              { name: rowB.full_name, color: "#4f8cff", values: skillsB },
+            ]}
+          />
+        </Card>
+      )}
     </>
   );
 }

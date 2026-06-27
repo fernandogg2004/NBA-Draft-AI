@@ -2,8 +2,9 @@ import { useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
-import { pct, signed } from "../lib/format";
+import { pct, signed, usdM } from "../lib/format";
 import { tierSlices } from "../lib/tiers";
+import { prospectSkills } from "../lib/types";
 import { Icon } from "../components/Icon";
 import {
   Card,
@@ -39,6 +40,7 @@ export function ProspectDetail() {
   if (!row) return <ErrorState message="No prospects available." onRetry={reload} />;
 
   const slices = tierSlices(row);
+  const skills = prospectSkills(row);
   const halfInterval = (row.ceiling - row.floor) / 2;
 
   return (
@@ -63,9 +65,14 @@ export function ProspectDetail() {
               {row.full_name}
             </h1>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Chip>POS · <Placeholder label="—" /></Chip>
-              <Chip>MEAS · <Placeholder label="—" /></Chip>
-              <Chip tone="muted">ARCHETYPE · placeholder</Chip>
+              {row.archetype && <Chip tone="primary">{row.archetype}</Chip>}
+              <Chip>
+                AGE · {row.age != null ? row.age.toFixed(1) : <Placeholder label="—" />}
+              </Chip>
+              <Chip>
+                WINGSPAN ·{" "}
+                {row.wingspan_in != null ? `${row.wingspan_in.toFixed(1)}"` : <Placeholder label="—" />}
+              </Chip>
             </div>
           </div>
         </div>
@@ -102,42 +109,35 @@ export function ProspectDetail() {
             />
             <MetricTile
               label="Peak Impact"
-              value={<Placeholder label="—" />}
-              sub="model field pending"
+              value={row.peak_pctile != null ? `Top ${Math.max(1, Math.round((1 - row.peak_pctile) * 100))}%` : "—"}
+              sub="percentile in pool"
             />
             <MetricTile
               label="Cumulative Value"
-              value={<Placeholder label="$ —" />}
-              sub="model field pending"
+              value={row.projected_value_usd != null ? usdM(row.projected_value_usd, false) : "$ —"}
+              sub="over rookie window (assumption)"
             />
           </div>
         </Card>
 
-        {/* ---- Skill radar ---- */}
+        {/* ---- Skill radar (feature-derived) ---- */}
         <Card>
           <div className="mb-2 flex items-center justify-between">
             <SectionLabel>Skill Profile</SectionLabel>
-            <Chip tone="muted">illustrative</Chip>
+            <Chip tone="muted">exploratory mapping</Chip>
           </div>
-          <SkillRadar
-            axes={["Scoring", "Shooting", "Playmaking", "Rebounding", "Rim Prot.", "Per. Def."]}
-            series={[
-              {
-                name: row.full_name,
-                color: "#ff6a2c",
-                values: {
-                  Scoring: 70,
-                  Shooting: 62,
-                  Playmaking: 58,
-                  Rebounding: 55,
-                  "Rim Prot.": 48,
-                  "Per. Def.": 60,
-                },
-              },
-            ]}
-          />
+          {skills ? (
+            <SkillRadar
+              axes={Object.keys(skills)}
+              series={[{ name: row.full_name, color: "#ff6a2c", values: skills }]}
+            />
+          ) : (
+            <div className="p-8 text-center font-body-sm text-on-surface-variant">
+              Skill profile unavailable for this prospect.
+            </div>
+          )}
           <p className="mt-1 text-center font-label-caps text-[10px] text-on-surface-variant">
-            Skill ratings not yet exposed by the model — placeholder shape.
+            Functional skills derived from pre-draft box stats (0–100 percentile).
           </p>
         </Card>
       </div>
@@ -155,21 +155,27 @@ export function ProspectDetail() {
           </p>
         </Card>
 
-        {/* ---- Combine (placeholder) ---- */}
+        {/* ---- Combine (wingspan real; rest not measured in this pool) ---- */}
         <Card>
           <SectionLabel className="mb-3">Combine Data</SectionLabel>
           <dl className="divide-y divide-outline-variant/50">
-            {["Wingspan", "Standing Vertical", "Max Vertical", "Lane Agility"].map((k) => (
+            <div className="flex items-center justify-between py-2">
+              <dt className="font-body-sm text-[13px] text-on-surface-variant">Wingspan</dt>
+              <dd className="font-data-tabular text-[13px] text-on-surface">
+                {row.wingspan_in != null ? `${row.wingspan_in.toFixed(1)}"` : <Placeholder label="—" />}
+              </dd>
+            </div>
+            {["Standing Vertical", "Max Vertical", "Lane Agility"].map((k) => (
               <div key={k} className="flex items-center justify-between py-2">
                 <dt className="font-body-sm text-[13px] text-on-surface-variant">{k}</dt>
                 <dd>
-                  <Placeholder label="—" />
+                  <Placeholder label="not measured" />
                 </dd>
               </div>
             ))}
           </dl>
           <p className="mt-1 font-label-caps text-[10px] text-on-surface-variant">
-            Combine measurements not in the model — placeholder.
+            Wingspan is in the pool; other Combine drills aren’t collected for this dataset.
           </p>
         </Card>
       </div>

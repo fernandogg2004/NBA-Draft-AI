@@ -111,13 +111,18 @@ export function DraftBoard() {
                                 {row.full_name}
                               </div>
                               <div className="mt-0.5 font-label-caps text-[9px] text-on-surface-variant">
-                                {row.draft_year ? `Class ${row.draft_year}` : "Prospect pool"}
+                                {[
+                                  row.draft_year ? `Class ${row.draft_year}` : null,
+                                  row.age != null ? `${row.age.toFixed(1)}y` : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" • ") || "Prospect pool"}
                               </div>
                             </div>
                           </div>
                         </td>
                         <td className="hidden p-3 sm:table-cell">
-                          <Placeholder label="—" />
+                          {row.archetype ? <Chip>{row.archetype}</Chip> : <Placeholder label="—" />}
                         </td>
                         <td className="hidden p-3 lg:table-cell">
                           <div className="mx-auto max-w-[160px]">

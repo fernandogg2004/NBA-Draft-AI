@@ -41,8 +41,38 @@ export interface ProspectRow {
   p_starter: number;
   p_all_star: number;
   p_superstar: number;
+  // Feature-derived profile (present on the enriched board; may be absent on a minimal table).
+  archetype?: string;
+  age?: number;
+  wingspan_in?: number;
+  peak_pctile?: number; // 0..1, higher is better
+  projected_value_usd?: number;
+  skill_scoring?: number;
+  skill_shooting_spacing?: number;
+  skill_playmaking?: number;
+  skill_rebounding?: number;
+  skill_rim_protection?: number;
+  skill_perimeter_defense?: number;
   // Allow extra columns the real-data service may attach without breaking typing.
   [key: string]: number | string | undefined;
+}
+
+/** Functional skill dimensions (match SKILL_DIMS in the backend), with display labels. */
+export const SKILL_DIMS = [
+  { key: "skill_scoring", label: "Scoring" },
+  { key: "skill_shooting_spacing", label: "Shooting" },
+  { key: "skill_playmaking", label: "Playmaking" },
+  { key: "skill_rebounding", label: "Rebounding" },
+  { key: "skill_rim_protection", label: "Rim Prot." },
+  { key: "skill_perimeter_defense", label: "Per. Def." },
+] as const;
+
+/** Pull a prospect's skill ratings into a {label: value} map for the radar; null if absent. */
+export function prospectSkills(row: ProspectRow): Record<string, number> | null {
+  if (row.skill_scoring == null) return null;
+  const out: Record<string, number> = {};
+  for (const { key, label } of SKILL_DIMS) out[label] = Number(row[key] ?? 0);
+  return out;
 }
 
 export interface ShapContribution {
