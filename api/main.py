@@ -15,6 +15,7 @@ from typing import Any
 
 import polars as pl
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from nba_draft.fit import Player, TeamContext, load_cba
@@ -31,6 +32,23 @@ app = FastAPI(
     title="NBA Draft AI",
     version="0.1.0",
     description="Decision-support: projections, uncertainty, fit, and explanations.",
+)
+
+# Allow the React frontend (Vite dev server / any deployed origin) to call the API
+# directly. In dev the Vite proxy makes requests same-origin, so this mainly covers
+# running the SPA against the API without the proxy. Override via NBA_DRAFT_AI_CORS
+# (comma-separated origins); defaults to localhost dev ports.
+_cors_env = os.environ.get("NBA_DRAFT_AI_CORS")
+_cors_origins = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env
+    else ["http://localhost:5173", "http://127.0.0.1:5173"]
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -77,14 +95,16 @@ def health() -> dict[str, str]:
 
 @app.get("/prospects")
 def prospects(limit: int = 30) -> list[dict[str, Any]]:
-    """Ranked draft board for the demo pool.
+    """Ranked draft board for the demo pool, enriched with a per-prospect profile.
 
     With the survivorship-robust hurdle attached, rows carry ``p_reach`` + ``projected_ev`` and
     the board is ranked by unconditional EV; otherwise by conditional ``projected_impact``. Each
-    row also has the 80% interval (floor/ceiling) and outcome-tier probabilities.
+    row also has the 80% interval (floor/ceiling), outcome-tier probabilities, a feature-derived
+    profile (functional ``skill_*`` ratings, ``archetype``, ``age``, ``wingspan_in``), and two
+    projection-derived fields (``peak_pctile``, ``projected_value_usd``).
     """
     service, pool = _service_and_pool()
-    board = service.rank(pool).head(limit)
+    board = service.ranked_with_profile(pool).head(limit)
     return board.to_dicts()
 
 
@@ -97,6 +117,38 @@ def explain(player_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"player_id {player_id} not in pool")
     table, base = service.explain(row)
     return {"player_id": player_id, "base_value": base, "contributions": table.to_dicts()}
+
+
+@app.get("/counterfactual/{player_id}")
+def counterfactual(player_id: int, max_features: int = 3) -> dict[str, Any]:
+    """What feature change(s) would lift this prospect into the next outcome tier?
+
+    Greedy, in-bounds counterfactual search over the projection model. ``reached`` is False if
+    no change set within ``max_features`` hits the target; ``target`` is null if already top-tier.
+    """
+    service, pool = _service_and_pool()
+    row = pool.filter(pl.col("player_id") == player_id)
+    if row.height == 0:
+        raise HTTPException(status_code=404, detail=f"player_id {player_id} not in pool")
+    cf = service.counterfactual(row, max_features=max_features)
+    return {
+        "player_id": player_id,
+        "current_impact": cf.current_impact,
+        "current_tier": cf.current_tier,
+        "target": cf.target,
+        "target_tier": cf.target_tier,
+        "projected_impact": cf.projected_impact,
+        "reached": cf.reached,
+        "changes": [
+            {
+                "feature": c.feature,
+                "from_value": c.from_value,
+                "to_value": c.to_value,
+                "delta": c.delta,
+            }
+            for c in cf.changes
+        ],
+    }
 
 
 @app.post("/fit")
@@ -121,7 +173,15 @@ def fit(req: FitRequest) -> dict[str, Any]:
         "rsv_usd": result.rsv_usd,
         "rsv_modulated_usd": result.rsv_modulated_usd,
         "apron_label": result.apron_label,
+        # Synergy sub-scores (0..1): how the prospect fills needs vs. duplicates strengths.
+        "synergy_complementarity": result.synergy.complementarity,
+        "synergy_redundancy": result.synergy.redundancy,
+        "synergy_net": result.synergy.net,
+        # Lineup Net-Rating simulation: base -> with-prospect (replacing the weakest link).
+        "lineup_before": result.lineup.before,
+        "lineup_after": result.lineup.after,
         "lineup_delta": result.lineup.delta,
+        "lineup_replaced": result.lineup.replaced,
         "narrative": result.narrative,
         "exploratory": result.exploratory,
         "assumptions": result.assumptions,

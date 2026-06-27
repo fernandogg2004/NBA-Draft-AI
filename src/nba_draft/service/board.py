@@ -17,8 +17,10 @@ from nba_draft.fit import (
     load_cba,
     player_team_fit,
 )
+from nba_draft.fit.financial import projected_value_usd
 from nba_draft.fit.score import FitResult
-from nba_draft.interpretability import ShapExplainer
+from nba_draft.fit.types import SKILL_DIMS
+from nba_draft.interpretability import ShapExplainer, greedy_counterfactual
 from nba_draft.models.hurdle import REPLACEMENT_BPM, HurdleModel
 from nba_draft.models.zoo import logistic_classifier, ridge_regressor
 from nba_draft.uncertainty import BootstrapEnsemble
@@ -27,6 +29,41 @@ from nba_draft.validation import FoldPreprocessor, make_data_split
 # Outcome-tier bands on the impact scale (BPM-like); align with config/targets in production.
 TIER_EDGES: list[float] = [-1e9, -2.0, 0.0, 3.0, 6.0, 1e9]
 TIER_LABELS: list[str] = ["bust", "rotation", "starter", "all_star", "superstar"]
+
+
+def _tier_for(value: float) -> str:
+    """Outcome-tier label for an impact value (using TIER_EDGES bands)."""
+    for label, hi in zip(TIER_LABELS, TIER_EDGES[1:], strict=True):
+        if value < hi:
+            return label
+    return TIER_LABELS[-1]
+
+
+@dataclass
+class CounterfactualChange:
+    """One feature move proposed to lift a prospect toward the next tier."""
+
+    feature: str
+    from_value: float
+    to_value: float
+    delta: float
+
+
+@dataclass
+class CounterfactualResult:
+    """Smallest set of feature changes that would lift a prospect to the next tier.
+
+    ``reached`` is False when no in-bounds change set hit the target within max_features.
+    ``target`` is ``None`` when the prospect is already in the top tier (no change needed).
+    """
+
+    current_impact: float
+    current_tier: str
+    target: float | None
+    target_tier: str | None
+    projected_impact: float
+    reached: bool
+    changes: list[CounterfactualChange]
 
 
 def _scale(value: float, lo: float, hi: float) -> float:
@@ -54,6 +91,25 @@ def prospect_to_player(name: str, row: dict[str, Any], impact: float) -> Player:
         },
         impact=impact,
     )
+
+
+# Descriptive archetype = the prospect's dominant functional skill. Deterministic and
+# transparent (no clustering), so it is honest about being a simple label, not a model.
+_ARCHETYPE_BY_SKILL: dict[str, str] = {
+    "scoring": "Scorer",
+    "shooting_spacing": "Floor Spacer",
+    "playmaking": "Playmaker",
+    "rebounding": "Rebounder",
+    "rim_protection": "Rim Protector",
+    "perimeter_defense": "Perimeter Defender",
+}
+
+
+def archetype_from_skills(skills: dict[str, float]) -> str:
+    """Label a prospect by their strongest functional skill (descriptive, EXPLORATORY)."""
+    if not skills:
+        return "Unspecified"
+    return _ARCHETYPE_BY_SKILL[max(SKILL_DIMS, key=lambda d: skills.get(d, 0.0))]
 
 
 @dataclass
@@ -106,12 +162,117 @@ class DraftBoardService:
             )
         return out.sort(sort_col, descending=True)
 
+    def profile_table(self, prospects: pl.DataFrame) -> pl.DataFrame:
+        """Feature-derived prospect profile: functional skills, archetype, age, wingspan.
+
+        Skills use the same heuristic mapping as the fit module (``prospect_to_player``); the
+        archetype is the dominant skill. All EXPLORATORY (the skill mapping is illustrative).
+        Only columns actually present in the pool are emitted (e.g. wingspan/age may be absent
+        on a minimal real table), so the API surfaces real data and omits what it doesn't have.
+        """
+        rows: list[dict[str, Any]] = []
+        for r in prospects.iter_rows(named=True):
+            player = prospect_to_player(str(r.get("full_name", "")), dict(r), impact=0.0)
+            entry: dict[str, Any] = {
+                self.name_col: r.get(self.name_col),
+                "archetype": archetype_from_skills(player.skills),
+                **{f"skill_{k}": round(v, 1) for k, v in player.skills.items()},
+            }
+            if r.get("age") is not None:
+                entry["age"] = round(float(r["age"]), 1)
+            if r.get("wingspan_in") is not None:
+                entry["wingspan_in"] = round(float(r["wingspan_in"]), 1)
+            rows.append(entry)
+        return pl.DataFrame(rows)
+
+    def ranked_with_profile(
+        self, prospects: pl.DataFrame, *, cba: CBAConfig | None = None
+    ) -> pl.DataFrame:
+        """Ranked board joined with the feature-derived profile + two projection-derived fields.
+
+        Adds ``peak_pctile`` (percentile rank of the ranking metric within the pool; higher is
+        better) and ``projected_value_usd`` (team-independent $ value over the rookie window from
+        the projected impact). Powers the Draft Board / Prospect Detail / Comparison screens.
+        """
+        cba = cba or load_cba()
+        board = self.rank(prospects)
+        rank_col = "projected_ev" if "projected_ev" in board.columns else "projected_impact"
+        board = board.with_columns(
+            (pl.col(rank_col).rank() / pl.len()).round(4).alias("peak_pctile"),
+            pl.col("projected_impact")
+            .map_elements(
+                lambda v: round(projected_value_usd(max(0.0, float(v)), cba), 2),
+                return_dtype=pl.Float64,
+            )
+            .alias("projected_value_usd"),
+        )
+        if self.name_col in board.columns:
+            return board.join(self.profile_table(prospects), on=self.name_col, how="left")
+        return board
+
     def explain(self, prospect_row: pl.DataFrame) -> tuple[pl.DataFrame, float]:
         """Local SHAP explanation for a single prospect (lazily builds the explainer)."""
         if self._shap is None:
             self._shap = ShapExplainer(self.impact_model, self.background, self.feature_cols)
         x = self._matrix(prospect_row)
         return self._shap.local_explanation(x[0])
+
+    def counterfactual(
+        self, prospect_row: pl.DataFrame, *, max_features: int = 3
+    ) -> CounterfactualResult:
+        """What feature change(s) would lift this prospect into the next outcome tier?
+
+        Targets the lower edge of the next tier above the current projection and greedily
+        searches a few features for the smallest moves that reach it. Feature bounds come from
+        the 5th-95th percentiles of the training background (avoids unrealistic extremes).
+        """
+        x = self._matrix(prospect_row)[0]
+        current = float(self.impact_model.predict(x.reshape(1, -1))[0])
+        current_tier = _tier_for(current)
+
+        # Next tier edge strictly above the current projection (skip the +inf sentinel).
+        target = next((e for e in TIER_EDGES[1:-1] if e > current), None)
+        if target is None:  # already top tier — nothing to change
+            return CounterfactualResult(
+                current_impact=round(current, 3),
+                current_tier=current_tier,
+                target=None,
+                target_tier=None,
+                projected_impact=round(current, 3),
+                reached=True,
+                changes=[],
+            )
+
+        lo = np.percentile(self.background, 5, axis=0)
+        hi = np.percentile(self.background, 95, axis=0)
+        bounds = {j: (float(lo[j]), float(hi[j])) for j in range(len(self.feature_cols))}
+
+        moves = greedy_counterfactual(
+            self.impact_model, x, target, bounds, max_features=max_features
+        )
+        x_new = x.copy()
+        for j, v in moves.items():
+            x_new[j] = v
+        projected = float(self.impact_model.predict(x_new.reshape(1, -1))[0])
+
+        changes = [
+            CounterfactualChange(
+                feature=self.feature_cols[j],
+                from_value=round(float(x[j]), 3),
+                to_value=round(float(v), 3),
+                delta=round(float(v) - float(x[j]), 3),
+            )
+            for j, v in moves.items()
+        ]
+        return CounterfactualResult(
+            current_impact=round(current, 3),
+            current_tier=current_tier,
+            target=round(float(target), 3),
+            target_tier=_tier_for(target),
+            projected_impact=round(projected, 3),
+            reached=projected >= target,
+            changes=changes,
+        )
 
     def fit_for_team(
         self,

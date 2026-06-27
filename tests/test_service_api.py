@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from nba_draft.fit import Player, TeamContext, load_cba
+from nba_draft.fit import SKILL_DIMS, Player, TeamContext, load_cba
 from nba_draft.service import build_demo_service, prospect_to_player
-from nba_draft.service.board import TIER_LABELS
+from nba_draft.service.board import _ARCHETYPE_BY_SKILL, TIER_LABELS
+
+_ARCHETYPE_LABELS = list(_ARCHETYPE_BY_SKILL.values())
 
 
 @pytest.fixture(scope="module")
@@ -56,6 +58,55 @@ def test_fit_for_team_uses_apron_pressure(service_and_pool):
     res = service.fit_for_team(row, over2, pick=8, cba=cba)
     assert res.exploratory is True
     assert "second apron" in res.apron_label
+
+
+def test_ranked_with_profile_adds_real_profile_fields(service_and_pool):
+    service, pool = service_and_pool
+    board = service.ranked_with_profile(pool)
+    assert board.height == pool.height
+    skill_cols = [f"skill_{d}" for d in SKILL_DIMS]
+    extra = ("archetype", "age", "wingspan_in", "peak_pctile", "projected_value_usd")
+    for col in (*skill_cols, *extra):
+        assert col in board.columns
+    # skills are 0-100 percentiles
+    skills = board.select(skill_cols).to_numpy()
+    assert skills.min() >= 0.0 and skills.max() <= 100.0
+    # peak percentile is a real 0..1 rank; the top prospect is at the max
+    assert ((board["peak_pctile"] > 0.0) & (board["peak_pctile"] <= 1.0)).all()
+    assert board.sort("projected_impact", descending=True)["peak_pctile"][0] == pytest.approx(1.0)
+    # projected $ value is non-negative and the archetype is one of the known labels
+    assert (board["projected_value_usd"] >= 0.0).all()
+    assert set(board["archetype"].unique()).issubset(set(_ARCHETYPE_LABELS))
+
+
+def test_counterfactual_lifts_a_low_prospect_toward_next_tier(service_and_pool):
+    import polars as pl
+
+    service, pool = service_and_pool
+    board = service.rank(pool)
+    # the weakest prospect should have a reachable next-tier target
+    low_name = board.sort("projected_impact")["full_name"][0]
+    row = pool.filter(pl.col("full_name") == low_name)
+    cf = service.counterfactual(row)
+    assert cf.target is not None  # not already top-tier
+    assert cf.target_tier is not None
+    # the proposed changes move the projection upward toward the target
+    assert cf.projected_impact >= cf.current_impact
+    assert all(c.feature in service.feature_cols for c in cf.changes)
+    if cf.reached:
+        assert cf.projected_impact >= cf.target
+
+
+def test_counterfactual_top_tier_needs_no_change(service_and_pool):
+    import polars as pl
+
+    service, pool = service_and_pool
+    board = service.rank(pool)
+    top_name = board.sort("projected_impact", descending=True)["full_name"][0]
+    row = pool.filter(pl.col("full_name") == top_name)
+    cf = service.counterfactual(row)
+    if cf.current_tier == TIER_LABELS[-1]:
+        assert cf.target is None and cf.reached and cf.changes == []
 
 
 def test_prospect_to_player_maps_skills_in_range():
@@ -118,6 +169,32 @@ def test_fit_endpoint(client):
     body = r.json()
     assert "narrative" in body and body["exploratory"] is True
     assert "Net Rating goes from" in body["narrative"]
+    # synergy sub-scores + lineup before/after/replaced are exposed
+    for key in (
+        "synergy_complementarity",
+        "synergy_redundancy",
+        "synergy_net",
+        "lineup_before",
+        "lineup_after",
+        "lineup_replaced",
+    ):
+        assert key in body
+    # delta is consistent with before/after
+    delta = body["lineup_after"] - body["lineup_before"]
+    assert delta == pytest.approx(body["lineup_delta"], abs=0.01)
+
+
+def test_counterfactual_endpoint_and_404(client):
+    _, pool = build_demo_service()
+    pid = int(pool["player_id"][0])
+    r = client.get(f"/counterfactual/{pid}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["player_id"] == pid
+    assert "current_tier" in body and "changes" in body
+    assert isinstance(body["changes"], list)
+    # unknown id -> 404
+    assert client.get("/counterfactual/99999999").status_code == 404
 
 
 # ----------------------------------------------------------------- real-data service builder

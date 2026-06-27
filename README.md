@@ -308,7 +308,19 @@ streamlit run dashboard/streamlit_app.py      # GM dashboard at http://localhost
 ```
 
 API endpoints: `GET /health`, `GET /prospects` (ranked board), `GET /explain/{player_id}`,
-`POST /fit` (submit a roster + cap situation → fit score + narrative).
+`GET /counterfactual/{player_id}` (smallest feature changes to reach the next outcome tier),
+`POST /fit` (submit a roster + cap situation → fit score, synergy sub-scores, lineup Net-Rating
+before→after, and narrative).
+
+**Web frontend (Front Office — Draft Command Center).** A React/Tailwind app implementing the
+Apex Front Office design lives in `frontend/`; it consumes the same FastAPI service. Run the API
+(above), then:
+
+```bash
+cd frontend && npm install && npm run dev    # http://localhost:5173 (proxies /api → :8000)
+```
+
+See `frontend/README.md` for screens, configuration, and build steps.
 
 ### Run on real data
 
