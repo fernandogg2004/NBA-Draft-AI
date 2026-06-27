@@ -78,8 +78,35 @@ export interface FitResult {
   rsv_usd: number;
   rsv_modulated_usd: number;
   apron_label: string;
+  // Synergy sub-scores (exploratory raw scores — relative, not 0..100).
+  synergy_complementarity: number;
+  synergy_redundancy: number;
+  synergy_net: number;
+  // Lineup Net-Rating simulation.
+  lineup_before: number;
+  lineup_after: number;
   lineup_delta: number;
+  lineup_replaced: string;
   narrative: string;
-  exploratory: Record<string, unknown>;
+  exploratory: boolean;
   assumptions: string[];
+}
+
+export interface CounterfactualChange {
+  feature: string;
+  from_value: number;
+  to_value: number;
+  delta: number;
+}
+
+export interface Counterfactual {
+  player_id: number;
+  current_impact: number;
+  current_tier: string;
+  /** null when already in the top tier (no change needed). */
+  target: number | null;
+  target_tier: string | null;
+  projected_impact: number;
+  reached: boolean;
+  changes: CounterfactualChange[];
 }

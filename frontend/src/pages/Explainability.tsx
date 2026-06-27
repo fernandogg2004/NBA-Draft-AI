@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { humanize } from "../lib/format";
 import { Icon } from "../components/Icon";
-import { Card, Chip, ErrorState, Loading, Placeholder, SectionLabel } from "../components/ui";
+import { Card, Chip, ErrorState, Loading, SectionLabel } from "../components/ui";
 import { ShapBars, type ShapItem } from "../components/charts";
 import { ProspectSelect } from "../components/ProspectSelect";
 
@@ -22,6 +22,12 @@ export function Explainability() {
 
   const expl = useAsync(
     () => (selectedId != null ? api.explain(selectedId) : Promise.reject(new Error("no prospect"))),
+    [selectedId],
+  );
+
+  const cf = useAsync(
+    () =>
+      selectedId != null ? api.counterfactual(selectedId) : Promise.reject(new Error("no prospect")),
     [selectedId],
   );
 
@@ -132,23 +138,70 @@ export function Explainability() {
         </Card>
       </div>
 
-      {/* ---- Counterfactual (placeholder) ---- */}
+      {/* ---- Counterfactual (real) ---- */}
       <Card>
         <div className="mb-2 flex items-center justify-between">
           <SectionLabel>Counterfactual Analysis</SectionLabel>
-          <Chip tone="muted">endpoint pending</Chip>
+          {cf.data?.target_tier && (
+            <Chip tone="primary">
+              → {cf.data.target_tier} tier (≥ {cf.data.target?.toFixed(1)})
+            </Chip>
+          )}
         </div>
-        <p className="font-body-sm text-on-surface-variant">
-          “What change would lift this prospect to the next tier?” The model has counterfactual
-          logic (<code className="text-on-surface">interpretability/counterfactual.py</code>) but
-          it isn’t exposed on the API yet.
-        </p>
-        <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2">
-          <Icon name="trending_up" size={18} className="text-brand-orange" />
-          <span className="font-data-tabular text-[13px] text-on-surface">
-            <Placeholder label="+3.5% 3PT (example)" />
-          </span>
-        </div>
+        {cf.loading && <Loading label="Searching counterfactuals…" />}
+        {cf.error && <ErrorState message={cf.error} onRetry={cf.reload} />}
+        {cf.data && (
+          <>
+            {cf.data.target == null ? (
+              <p className="font-body-sm text-on-surface">
+                Already in the top tier ({cf.data.current_tier}) — no change needed to advance.
+              </p>
+            ) : (
+              <>
+                <p className="font-body-sm text-on-surface-variant">
+                  Smallest feature change(s) to lift {row?.full_name ?? "this prospect"} from{" "}
+                  <span className="text-on-surface">{cf.data.current_tier}</span> toward{" "}
+                  <span className="text-brand-orange">{cf.data.target_tier}</span> — projection{" "}
+                  {cf.data.current_impact.toFixed(2)} →{" "}
+                  <span className="font-data-tabular text-on-surface">
+                    {cf.data.projected_impact.toFixed(2)}
+                  </span>
+                  {cf.data.reached ? "" : " (target not reachable within 3 changes)"}.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {cf.data.changes.map((c) => (
+                    <div
+                      key={c.feature}
+                      className="inline-flex items-center gap-2 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2"
+                    >
+                      <Icon
+                        name={c.delta >= 0 ? "trending_up" : "trending_down"}
+                        size={18}
+                        className={c.delta >= 0 ? "text-brand-orange" : "text-brand-blue"}
+                      />
+                      <span className="font-body-sm text-[13px] text-on-surface">
+                        {humanize(c.feature)}
+                      </span>
+                      <span className="font-data-tabular text-[12px] text-on-surface-variant">
+                        {c.from_value.toFixed(1)} →{" "}
+                        <span className="text-on-surface">{c.to_value.toFixed(1)}</span>
+                      </span>
+                    </div>
+                  ))}
+                  {cf.data.changes.length === 0 && (
+                    <p className="font-body-sm text-on-surface-variant">
+                      No single in-bounds change set reaches the next tier.
+                    </p>
+                  )}
+                </div>
+                <p className="mt-3 font-label-caps text-[10px] text-on-surface-variant">
+                  Greedy search over the projection model; feature values in model (preprocessed)
+                  units.
+                </p>
+              </>
+            )}
+          </>
+        )}
       </Card>
     </>
   );

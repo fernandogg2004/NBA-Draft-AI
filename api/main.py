@@ -117,6 +117,38 @@ def explain(player_id: int) -> dict[str, Any]:
     return {"player_id": player_id, "base_value": base, "contributions": table.to_dicts()}
 
 
+@app.get("/counterfactual/{player_id}")
+def counterfactual(player_id: int, max_features: int = 3) -> dict[str, Any]:
+    """What feature change(s) would lift this prospect into the next outcome tier?
+
+    Greedy, in-bounds counterfactual search over the projection model. ``reached`` is False if
+    no change set within ``max_features`` hits the target; ``target`` is null if already top-tier.
+    """
+    service, pool = _service_and_pool()
+    row = pool.filter(pl.col("player_id") == player_id)
+    if row.height == 0:
+        raise HTTPException(status_code=404, detail=f"player_id {player_id} not in pool")
+    cf = service.counterfactual(row, max_features=max_features)
+    return {
+        "player_id": player_id,
+        "current_impact": cf.current_impact,
+        "current_tier": cf.current_tier,
+        "target": cf.target,
+        "target_tier": cf.target_tier,
+        "projected_impact": cf.projected_impact,
+        "reached": cf.reached,
+        "changes": [
+            {
+                "feature": c.feature,
+                "from_value": c.from_value,
+                "to_value": c.to_value,
+                "delta": c.delta,
+            }
+            for c in cf.changes
+        ],
+    }
+
+
 @app.post("/fit")
 def fit(req: FitRequest) -> dict[str, Any]:
     """Score a prospect's fit with a submitted roster + cap situation."""
@@ -139,7 +171,15 @@ def fit(req: FitRequest) -> dict[str, Any]:
         "rsv_usd": result.rsv_usd,
         "rsv_modulated_usd": result.rsv_modulated_usd,
         "apron_label": result.apron_label,
+        # Synergy sub-scores (0..1): how the prospect fills needs vs. duplicates strengths.
+        "synergy_complementarity": result.synergy.complementarity,
+        "synergy_redundancy": result.synergy.redundancy,
+        "synergy_net": result.synergy.net,
+        # Lineup Net-Rating simulation: base -> with-prospect (replacing the weakest link).
+        "lineup_before": result.lineup.before,
+        "lineup_after": result.lineup.after,
         "lineup_delta": result.lineup.delta,
+        "lineup_replaced": result.lineup.replaced,
         "narrative": result.narrative,
         "exploratory": result.exploratory,
         "assumptions": result.assumptions,

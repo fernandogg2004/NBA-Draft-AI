@@ -11,12 +11,15 @@ in Python.
 | --- | --- | --- |
 | `/board` | Draft Board | `GET /prospects` |
 | `/prospect/:id` | Prospect Detail | `GET /prospects` |
-| `/explain/:id` | Explainability (SHAP) | `GET /explain/{id}` |
+| `/explain/:id` | Explainability (SHAP + counterfactual) | `GET /explain/{id}`, `GET /counterfactual/{id}` |
 | `/team-fit` | Team Fit & Simulator | `POST /fit` |
 | `/compare` | Comparison | `GET /prospects` |
 
-Fields the model doesn't expose yet (combine measurements, $ cumulative value, player photos,
-archetype/need/synergy sub-scores, counterfactuals) render as clearly-labeled placeholders.
+Real model output now backs the SHAP attribution, the **counterfactual** ("what would lift this
+prospect to the next tier"), the **synergy sub-scores** (functional need / net / overlap), and the
+**lineup Net-Rating** before→after on Team Fit. Fields the model still doesn't expose (combine
+measurements, $ cumulative value, player photos, per-skill radar ratings) render as
+clearly-labeled placeholders.
 
 ## Run it
 

@@ -58,6 +58,36 @@ def test_fit_for_team_uses_apron_pressure(service_and_pool):
     assert "second apron" in res.apron_label
 
 
+def test_counterfactual_lifts_a_low_prospect_toward_next_tier(service_and_pool):
+    import polars as pl
+
+    service, pool = service_and_pool
+    board = service.rank(pool)
+    # the weakest prospect should have a reachable next-tier target
+    low_name = board.sort("projected_impact")["full_name"][0]
+    row = pool.filter(pl.col("full_name") == low_name)
+    cf = service.counterfactual(row)
+    assert cf.target is not None  # not already top-tier
+    assert cf.target_tier is not None
+    # the proposed changes move the projection upward toward the target
+    assert cf.projected_impact >= cf.current_impact
+    assert all(c.feature in service.feature_cols for c in cf.changes)
+    if cf.reached:
+        assert cf.projected_impact >= cf.target
+
+
+def test_counterfactual_top_tier_needs_no_change(service_and_pool):
+    import polars as pl
+
+    service, pool = service_and_pool
+    board = service.rank(pool)
+    top_name = board.sort("projected_impact", descending=True)["full_name"][0]
+    row = pool.filter(pl.col("full_name") == top_name)
+    cf = service.counterfactual(row)
+    if cf.current_tier == TIER_LABELS[-1]:
+        assert cf.target is None and cf.reached and cf.changes == []
+
+
 def test_prospect_to_player_maps_skills_in_range():
     feats = {"pts_per100": 20, "true_shooting": 0.6, "ast_per100": 5}
     p = prospect_to_player("X", feats, impact=3.0)
@@ -118,6 +148,32 @@ def test_fit_endpoint(client):
     body = r.json()
     assert "narrative" in body and body["exploratory"] is True
     assert "Net Rating goes from" in body["narrative"]
+    # synergy sub-scores + lineup before/after/replaced are exposed
+    for key in (
+        "synergy_complementarity",
+        "synergy_redundancy",
+        "synergy_net",
+        "lineup_before",
+        "lineup_after",
+        "lineup_replaced",
+    ):
+        assert key in body
+    # delta is consistent with before/after
+    delta = body["lineup_after"] - body["lineup_before"]
+    assert delta == pytest.approx(body["lineup_delta"], abs=0.01)
+
+
+def test_counterfactual_endpoint_and_404(client):
+    _, pool = build_demo_service()
+    pid = int(pool["player_id"][0])
+    r = client.get(f"/counterfactual/{pid}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["player_id"] == pid
+    assert "current_tier" in body and "changes" in body
+    assert isinstance(body["changes"], list)
+    # unknown id -> 404
+    assert client.get("/counterfactual/99999999").status_code == 404
 
 
 # ----------------------------------------------------------------- real-data service builder

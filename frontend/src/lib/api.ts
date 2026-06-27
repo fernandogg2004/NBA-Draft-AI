@@ -4,7 +4,13 @@
  * In dev, requests go to /api/* and Vite proxies them to the uvicorn server
  * (see vite.config.ts). In production, set VITE_API_BASE to the API origin.
  */
-import type { Explanation, FitRequest, FitResult, ProspectRow } from "./types";
+import type {
+  Counterfactual,
+  Explanation,
+  FitRequest,
+  FitResult,
+  ProspectRow,
+} from "./types";
 
 const BASE = (import.meta.env.VITE_API_BASE ?? "/api").replace(/\/$/, "");
 
@@ -44,6 +50,11 @@ export const api = {
 
   explain: (playerId: number) =>
     request<Explanation>(`/explain/${encodeURIComponent(playerId)}`),
+
+  counterfactual: (playerId: number, maxFeatures = 3) =>
+    request<Counterfactual>(
+      `/counterfactual/${encodeURIComponent(playerId)}?max_features=${maxFeatures}`,
+    ),
 
   fit: (body: FitRequest) =>
     request<FitResult>("/fit", {

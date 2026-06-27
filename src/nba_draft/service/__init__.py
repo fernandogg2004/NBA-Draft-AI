@@ -7,6 +7,8 @@ score a prospect's fit with a specific roster. Kept framework-free so it is unit
 """
 
 from nba_draft.service.board import (
+    CounterfactualChange,
+    CounterfactualResult,
     DraftBoardService,
     build_demo_service,
     build_service_from_master,
@@ -15,6 +17,8 @@ from nba_draft.service.board import (
 )
 
 __all__ = [
+    "CounterfactualChange",
+    "CounterfactualResult",
     "DraftBoardService",
     "build_demo_service",
     "build_service_from_master",

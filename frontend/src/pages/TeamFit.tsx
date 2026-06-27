@@ -10,7 +10,7 @@ import {
   type CapSituation,
 } from "../lib/presets";
 import { Icon } from "../components/Icon";
-import { Card, Chip, ErrorState, Loading, Placeholder, SectionLabel } from "../components/ui";
+import { Card, Chip, ErrorState, Loading, SectionLabel } from "../components/ui";
 import { Gauge, ScoreBar } from "../components/charts";
 import { ProspectSelect } from "../components/ProspectSelect";
 
@@ -133,13 +133,20 @@ export function TeamFit() {
               <div className="space-y-4">
                 <ScoreBar label="Basketball Fit" value={fit.data.basketball_fit} />
                 <ScoreBar label="Financial Fit" value={fit.data.financial_fit} />
-                <div className="flex items-center justify-between rounded-md border border-dashed border-outline-variant px-3 py-2">
-                  <span className="font-body-sm text-[13px] text-on-surface-variant">
-                    Archetype / Need / Synergy sub-scores
-                  </span>
-                  <Chip tone="muted">computed internally · not yet on API</Chip>
-                </div>
               </div>
+
+              <div className="mt-5">
+                <div className="mb-2 flex items-center gap-2">
+                  <SectionLabel>Synergy Sub-scores</SectionLabel>
+                  <Chip tone="muted">exploratory · relative</Chip>
+                </div>
+                <SynergyBars
+                  complementarity={fit.data.synergy_complementarity}
+                  net={fit.data.synergy_net}
+                  redundancy={fit.data.synergy_redundancy}
+                />
+              </div>
+
               <div className="mt-4 flex items-center gap-2">
                 <SectionLabel>Cap Status:</SectionLabel>
                 <Chip tone="primary">{fit.data.apron_label}</Chip>
@@ -185,21 +192,35 @@ export function TeamFit() {
                 <div className="text-center">
                   <SectionLabel>Base Lineup</SectionLabel>
                   <div className="font-display-num text-[28px] font-bold text-on-surface-variant">
-                    <Placeholder label="base" />
+                    {signed(fit.data.lineup_before)}
                   </div>
                 </div>
-                <Icon name="arrow_forward" size={28} className="text-on-surface-variant" />
-                <div className="text-center">
-                  <SectionLabel>With Prospect (Δ)</SectionLabel>
-                  <div
-                    className={`font-display-num text-[40px] font-bold ${
+                <div className="flex flex-col items-center">
+                  <Icon name="arrow_forward" size={28} className="text-on-surface-variant" />
+                  <span
+                    className={`font-data-tabular text-[12px] ${
                       fit.data.lineup_delta >= 0 ? "text-brand-orange" : "text-brand-blue"
                     }`}
                   >
                     {signed(fit.data.lineup_delta)}
+                  </span>
+                </div>
+                <div className="text-center">
+                  <SectionLabel>With Prospect</SectionLabel>
+                  <div
+                    className={`font-display-num text-[40px] font-bold ${
+                      fit.data.lineup_after >= fit.data.lineup_before
+                        ? "text-brand-orange"
+                        : "text-brand-blue"
+                    }`}
+                  >
+                    {signed(fit.data.lineup_after)}
                   </div>
                 </div>
               </div>
+              <p className="mt-2 text-center font-label-caps text-[10px] text-on-surface-variant">
+                Replacing weakest link: {fit.data.lineup_replaced}
+              </p>
 
               {/* GM narrative */}
               <div className="mt-4 rounded-md border-l-2 border-brand-orange bg-surface-container-low p-3">
@@ -244,6 +265,51 @@ function Control({ label, children }: { label: string; children: React.ReactNode
         {label}
       </label>
       {children}
+    </div>
+  );
+}
+
+/**
+ * The three synergy components on a shared relative scale (they're exploratory raw
+ * scores, not 0..100). Need + Net in orange, Overlap in blue (overlap is a discount).
+ */
+function SynergyBars({
+  complementarity,
+  net,
+  redundancy,
+}: {
+  complementarity: number;
+  net: number;
+  redundancy: number;
+}) {
+  const max = Math.max(1e-6, complementarity, net, redundancy);
+  const rows = [
+    { label: "Functional Need (fills gaps)", value: complementarity, color: "#ff6a2c" },
+    { label: "Roster Synergy (net)", value: net, color: "#ff6a2c" },
+    { label: "Overlap (redundancy)", value: redundancy, color: "#4f8cff" },
+  ];
+  return (
+    <div className="space-y-3">
+      {rows.map((r) => (
+        <div key={r.label}>
+          <div className="mb-1 flex items-center justify-between">
+            <span className="font-body-sm text-[13px] text-on-surface-variant">{r.label}</span>
+            <span className="font-data-tabular text-[12px] text-on-surface">
+              {r.value.toFixed(2)}
+            </span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-surface-container-highest">
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: `${Math.max(0, Math.min(100, (r.value / max) * 100))}%`,
+                backgroundColor: r.color,
+                opacity: 0.9,
+              }}
+            />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
