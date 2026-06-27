@@ -20,11 +20,14 @@ def test_rank_returns_projection_interval_and_scenarios(service_and_pool):
     service, pool = service_and_pool
     board = service.rank(pool)
     assert board.height == pool.height
-    for col in ("projected_impact", "floor", "ceiling", *[f"p_{t}" for t in TIER_LABELS]):
+    cols = ("projected_impact", "floor", "ceiling", *[f"p_{t}" for t in TIER_LABELS])
+    for col in cols:
         assert col in board.columns
-    # sorted by projection desc
-    proj = board["projected_impact"].to_list()
-    assert proj == sorted(proj, reverse=True)
+    # demo service attaches a hurdle -> EV columns present and board sorted by unconditional EV
+    assert "p_reach" in board.columns and "projected_ev" in board.columns
+    ev = board["projected_ev"].to_list()
+    assert ev == sorted(ev, reverse=True)
+    assert ((board["p_reach"] >= 0.0) & (board["p_reach"] <= 1.0)).all()
     # floor <= ceiling for every prospect
     assert (board["floor"] <= board["ceiling"]).all()
     # scenario probabilities sum to ~1 per prospect
@@ -83,8 +86,10 @@ def test_prospects_endpoint_returns_ranked_board(client):
     body = r.json()
     assert len(body) <= 5
     assert "projected_impact" in body[0]
-    projs = [b["projected_impact"] for b in body]
-    assert projs == sorted(projs, reverse=True)
+    # demo service ranks by survivorship-robust EV
+    assert "projected_ev" in body[0] and "p_reach" in body[0]
+    evs = [b["projected_ev"] for b in body]
+    assert evs == sorted(evs, reverse=True)
 
 
 def test_explain_endpoint_and_404(client):
@@ -144,3 +149,41 @@ def test_build_service_from_table_ranks_real_prospects():
     merged = board.join(table.select("player_id", "f_skill"), on="player_id")
     corr = np.corrcoef(merged["projected_impact"].to_numpy(), merged["f_skill"].to_numpy())[0, 1]
     assert corr > 0.5
+    # no reach column -> conditional-impact ranking, no hurdle attached
+    assert service.hurdle is None
+    proj = board["projected_impact"].to_list()
+    assert proj == sorted(proj, reverse=True)
+
+
+def test_build_service_from_table_attaches_hurdle_when_reach_present():
+    import numpy as np
+    import polars as pl
+
+    from nba_draft.service import build_service_from_table
+
+    rng = np.random.default_rng(1)
+    n = 120
+    skill = rng.normal(size=n)
+    # reach probability rises with skill; impact only observed for reached players
+    reached = (skill + rng.normal(scale=0.5, size=n)) > 0.0
+    peak = np.where(reached, 2.0 * skill + rng.normal(scale=0.3, size=n), np.nan)
+    table = pl.DataFrame(
+        {
+            "player_id": list(range(n)),
+            "full_name": [f"P{i}" for i in range(n)],
+            "f_skill": skill + rng.normal(scale=0.2, size=n),
+            "f_noise": rng.normal(size=n),
+            "reached": reached.tolist(),
+            "peak_impact": peak.tolist(),
+        }
+    )
+    service = build_service_from_table(table, ["f_skill", "f_noise"], target_col="peak_impact")
+    assert service.hurdle is not None
+    board = service.rank(table)
+    assert "p_reach" in board.columns and "projected_ev" in board.columns
+    ev = board["projected_ev"].to_list()
+    assert ev == sorted(ev, reverse=True)
+    # higher skill -> higher reach probability
+    merged = board.join(table.select("player_id", "f_skill"), on="player_id")
+    corr = np.corrcoef(merged["p_reach"].to_numpy(), merged["f_skill"].to_numpy())[0, 1]
+    assert corr > 0.4

@@ -55,7 +55,12 @@ def health() -> dict[str, str]:
 
 @app.get("/prospects")
 def prospects(limit: int = 30) -> list[dict[str, Any]]:
-    """Ranked draft board for the demo prospect pool (projection + interval + scenarios)."""
+    """Ranked draft board for the demo pool.
+
+    With the survivorship-robust hurdle attached, rows carry ``p_reach`` + ``projected_ev`` and
+    the board is ranked by unconditional EV; otherwise by conditional ``projected_impact``. Each
+    row also has the 80% interval (floor/ceiling) and outcome-tier probabilities.
+    """
     service, pool = _service_and_pool()
     board = service.rank(pool).head(limit)
     return board.to_dicts()

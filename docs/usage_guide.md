@@ -38,6 +38,11 @@ streamlit run dashboard/streamlit_app.py      # GM dashboard at http://localhost
 
 API endpoints: `GET /health`, `GET /prospects`, `GET /explain/{player_id}`, `POST /fit`.
 
+The served board is ranked by the **survivorship-robust hurdle** when one is attached (the demo
+service and any real table with a `reached` column): each prospect carries `p_reach` and
+`projected_ev` (`EV = P(reach)·E(impact|reached) + (1−P(reach))·replacement`) and the board sorts by
+`projected_ev` rather than conditional `projected_impact`. The dashboard surfaces both.
+
 ## Use real data
 
 1. `pip install -e ".[ingest]"` and pull locally (cloud IPs get banned):

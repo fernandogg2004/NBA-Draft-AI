@@ -17,7 +17,8 @@ from nba_draft.fit import (
 )
 from nba_draft.fit.score import FitResult
 from nba_draft.interpretability import ShapExplainer
-from nba_draft.models.zoo import ridge_regressor
+from nba_draft.models.hurdle import REPLACEMENT_BPM, HurdleModel
+from nba_draft.models.zoo import logistic_classifier, ridge_regressor
 from nba_draft.uncertainty import BootstrapEnsemble
 from nba_draft.validation import FoldPreprocessor, make_data_split
 
@@ -64,13 +65,18 @@ class DraftBoardService:
     background: np.ndarray
     name_col: str = "player_id"
     interval_alpha: float = 0.2
+    hurdle: Any | None = None      # optional HurdleModel -> survivorship-robust EV ranking
     _shap: ShapExplainer | None = None
 
     def _matrix(self, prospects: pl.DataFrame) -> np.ndarray:
         return self.preprocessor.transform_matrix(prospects).to_numpy()
 
     def rank(self, prospects: pl.DataFrame) -> pl.DataFrame:
-        """Rank prospects with projection, 80% interval (floor/ceiling), and tier probabilities."""
+        """Rank prospects by projection + 80% interval + tier probabilities.
+
+        If a hurdle model is attached, prospects are ranked by the survivorship-robust
+        unconditional EV (and P(reach) / EV columns are added); otherwise by conditional impact.
+        """
         x = self._matrix(prospects)
         point = np.asarray(self.impact_model.predict(x), dtype=float)
         lo, hi = self.ensemble.predict_interval(x, alpha=self.interval_alpha)
@@ -83,11 +89,20 @@ class DraftBoardService:
             pl.Series("floor", [round(float(v), 3) for v in lo]),
             pl.Series("ceiling", [round(float(v), 3) for v in hi]),
         )
+        sort_col = "projected_impact"
+        if self.hurdle is not None:
+            p_reach, _ = self.hurdle.predict_parts(x)
+            ev = np.asarray(self.hurdle.predict(x), dtype=float)
+            out = out.with_columns(
+                pl.Series("p_reach", [round(float(v), 4) for v in p_reach]),
+                pl.Series("projected_ev", [round(float(v), 3) for v in ev]),
+            )
+            sort_col = "projected_ev"
         for label in TIER_LABELS:
             out = out.with_columns(
                 pl.Series(f"p_{label}", [round(s[label], 4) for s in scenarios])
             )
-        return out.sort("projected_impact", descending=True)
+        return out.sort(sort_col, descending=True)
 
     def explain(self, prospect_row: pl.DataFrame) -> tuple[pl.DataFrame, float]:
         """Local SHAP explanation for a single prospect (lazily builds the explainer)."""
@@ -143,6 +158,12 @@ def build_demo_service(seed: int = 42) -> tuple[DraftBoardService, pl.DataFrame]
     ensemble = BootstrapEnsemble(lambda: ridge_regressor(1.0), n_estimators=30, seed=seed)
     ensemble.fit(x_tr, y_tr)
 
+    # Survivorship-robust hurdle: reach (impact above replacement) × conditional impact.
+    reached = (y_tr > REPLACEMENT_BPM).astype(float)
+    hurdle = HurdleModel(
+        reach_factory=logistic_classifier, impact_factory=lambda: ridge_regressor(1.0),
+    ).fit(x_tr, reached, y_tr)
+
     service = DraftBoardService(
         preprocessor=pp,
         impact_model=impact_model,
@@ -150,6 +171,7 @@ def build_demo_service(seed: int = 42) -> tuple[DraftBoardService, pl.DataFrame]
         feature_cols=feats,
         background=x_tr,
         name_col="player_id",
+        hurdle=hurdle,
     )
     # Give the pool friendly names for display.
     pool = split.holdout.with_columns(
@@ -163,30 +185,48 @@ def build_service_from_table(
     feature_cols: list[str],
     *,
     target_col: str = "peak_impact",
+    reached_col: str = "reached",
     seed: int = 42,
 ) -> DraftBoardService:
     """Build a DraftBoardService trained on a REAL modeling table (not the synthetic fixture).
 
-    Trains the impact regressor + uncertainty ensemble on the table's reached players (rows with a
-    non-null target). Point this at the master/real table to serve real prospects via the API or
-    dashboard. The fold preprocessor is fit on the training rows only.
+    The impact regressor + uncertainty ensemble train on reached players (non-null target). If a
+    ``reached_col`` is present, a survivorship-robust hurdle is also fit over ALL prospects and the
+    served board ranks by unconditional EV. The fold preprocessor is fit on the training rows.
     """
-    train = train_table.filter(pl.col(target_col).is_not_null())
-    if train.height < 2:
-        raise ValueError("Need at least 2 rows with a non-null target to train a service.")
-    pp = FoldPreprocessor(feature_cols).fit(train)
-    x_tr = pp.transform_matrix(train).to_numpy()
-    y_tr = train[target_col].to_numpy().astype(float)
+    # A finite target marks a reached prospect (polars NaN is not null, so guard both).
+    has_target = pl.col(target_col).is_not_null() & pl.col(target_col).is_not_nan()
+    reached_rows = train_table.filter(has_target)
+    if reached_rows.height < 2:
+        raise ValueError("Need at least 2 rows with a finite target to train a service.")
+    has_reach = reached_col in train_table.columns
+    # Fit the preprocessor on all prospects when a hurdle will be trained, else on reached rows.
+    pp = FoldPreprocessor(feature_cols).fit(train_table if has_reach else reached_rows)
+    x_reached = pp.transform_matrix(reached_rows).to_numpy()
+    y_reached = reached_rows[target_col].to_numpy().astype(float)
 
     impact_model = ridge_regressor(1.0)
-    impact_model.fit(x_tr, y_tr)
+    impact_model.fit(x_reached, y_reached)
     ensemble = BootstrapEnsemble(lambda: ridge_regressor(1.0), n_estimators=30, seed=seed)
-    ensemble.fit(x_tr, y_tr)
+    ensemble.fit(x_reached, y_reached)
+
+    hurdle = None
+    if has_reach:
+        x_all = pp.transform_matrix(train_table).to_numpy()
+        reach01 = (pl.col(reached_col).cast(pl.Boolean) & has_target).cast(pl.Float64)
+        reach_arr = train_table.select(reach01.alias("r"))["r"].to_numpy()
+        impact_all = train_table[target_col].to_numpy().astype(float)
+        if reach_arr.sum() >= 2:
+            hurdle = HurdleModel(
+                reach_factory=logistic_classifier, impact_factory=lambda: ridge_regressor(1.0),
+            ).fit(x_all, reach_arr, impact_all)
+
     return DraftBoardService(
         preprocessor=pp,
         impact_model=impact_model,
         ensemble=ensemble,
         feature_cols=feature_cols,
-        background=x_tr,
+        background=x_reached,
         name_col="player_id",
+        hurdle=hurdle,
     )

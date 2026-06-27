@@ -81,8 +81,18 @@ def main() -> None:
 
     # ---- ranked board ----
     board = service.rank(pool)
+    ranked_by_ev = "projected_ev" in board.columns
     with st.container(border=True):
-        st.subheader("Draft board (ranked by projected impact)")
+        st.subheader(
+            "Draft board (ranked by unconditional EV)"
+            if ranked_by_ev
+            else "Draft board (ranked by projected impact)"
+        )
+        if ranked_by_ev:
+            st.caption(
+                "EV = P(reach) · E(impact | reached) + (1 − P(reach)) · replacement — "
+                "survivorship-robust over all prospects."
+            )
         st.dataframe(board.to_pandas(), hide_index=True, width="stretch")
 
     # ---- per-prospect detail ----
@@ -92,6 +102,9 @@ def main() -> None:
     brow = board.filter(pl.col("full_name") == chosen).row(0, named=True)
 
     with st.container(horizontal=True):
+        if ranked_by_ev:
+            st.metric("Projected EV", f"{brow['projected_ev']:.2f}", border=True)
+            st.metric("P(reach)", f"{brow['p_reach']:.0%}", border=True)
         st.metric("Projected impact", f"{brow['projected_impact']:.2f}", border=True)
         st.metric("Floor (P10)", f"{brow['floor']:.2f}", border=True)
         st.metric("Ceiling (P90)", f"{brow['ceiling']:.2f}", border=True)
