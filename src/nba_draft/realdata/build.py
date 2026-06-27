@@ -385,6 +385,28 @@ def evaluate_real_models(
         summary_path = out / "real_run_summary.json"
         summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
 
+        # Persist the modeling table + a serving manifest so the API/dashboard can build a real
+        # DraftBoardService (see service.build_service_from_master). Polars writes parquet natively
+        # (no pyarrow needed). The full table is kept so the loader can hold out the latest class.
+        serving = out / "serving"
+        serving.mkdir(parents=True, exist_ok=True)
+        table.write_parquet(serving / "modeling_table.parquet")
+        (serving / "serving_manifest.json").write_text(
+            json.dumps(
+                {
+                    "table": "modeling_table.parquet",
+                    "feature_cols": list(feature_cols),
+                    "target_col": TARGET_COLUMN,
+                    "reached_col": "reached",
+                    "model_version": version,
+                    "created_at": summary["created_at"],
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
     return RealPipelineResult(
         n_drafted=table.height,
         n_resolved=resolved.height,

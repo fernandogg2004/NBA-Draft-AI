@@ -208,3 +208,55 @@ def test_build_service_from_table_rejects_post_draft_feature():
     # using a known post-draft column as a feature must trip the leakage guard
     with pytest.raises(ValueError, match="leakage"):
         build_service_from_table(table, ["f_skill", "peak_impact"], target_col="peak_impact")
+
+
+def test_build_service_from_master_round_trip(tmp_path):
+    import json
+
+    import numpy as np
+    import polars as pl
+
+    from nba_draft.service import build_service_from_master
+
+    rng = np.random.default_rng(3)
+    rows = []
+    for year in (2018, 2019, 2020, 2021):
+        for _ in range(25):
+            skill = rng.normal()
+            reached = (skill + rng.normal(scale=0.5)) > 0.0
+            rows.append(
+                {
+                    "player_id": len(rows),
+                    "full_name": f"P{len(rows)}",
+                    "draft_year": year,
+                    "f_skill": skill + rng.normal(scale=0.2),
+                    "reached": bool(reached),
+                    "peak_impact": (2.0 * skill if reached else None),
+                }
+            )
+    table = pl.DataFrame(rows)
+    serving = tmp_path / "serving"
+    serving.mkdir()
+    table.write_parquet(serving / "modeling_table.parquet")
+    (serving / "serving_manifest.json").write_text(
+        json.dumps(
+            {
+                "table": "modeling_table.parquet",
+                "feature_cols": ["f_skill"],
+                "target_col": "peak_impact",
+                "reached_col": "reached",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service, pool = build_service_from_master(serving)
+    # latest class is held out as the pool; service trains on the rest -> hurdle attached
+    assert pool["draft_year"].unique().to_list() == [2021]
+    assert service.hurdle is not None
+    board = service.rank(pool)
+    assert board.height == pool.height
+    assert "projected_ev" in board.columns and "p_reach" in board.columns
+    # accepting a manifest path directly works too
+    service2, _ = build_service_from_master(serving / "serving_manifest.json")
+    assert service2.hurdle is not None

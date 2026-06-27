@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -235,3 +237,48 @@ def build_service_from_table(
         name_col="player_id",
         hurdle=hurdle,
     )
+
+
+def build_service_from_master(
+    source: str | Path,
+    *,
+    pool_years: list[int] | None = None,
+    seed: int = 42,
+) -> tuple[DraftBoardService, pl.DataFrame]:
+    """Load a persisted real modeling table + manifest -> (service, prospect_pool).
+
+    `source` is the serving directory (or the ``serving_manifest.json``) written by
+    ``realdata.build.evaluate_real_models``. The most recent draft class is held out as the pool to
+    rank and the service trains on the remaining (older) classes, so the served board never trains
+    on the prospects it ranks. Falls back to training on the whole table if the hold-out would leave
+    too few labeled rows to fit the impact head.
+    """
+    path = Path(source)
+    manifest_path = path if path.suffix == ".json" else path / "serving_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    table = pl.read_parquet(manifest_path.parent / manifest["table"])
+    feature_cols = list(manifest["feature_cols"])
+    target_col = manifest.get("target_col", "peak_impact")
+    reached_col = manifest.get("reached_col", "reached")
+
+    years = pool_years
+    if years is None and "draft_year" in table.columns and table["draft_year"].n_unique() > 1:
+        latest = table["draft_year"].max()
+        years = [int(latest)]  # type: ignore[arg-type]  # draft_year is an integer column
+    if years:
+        pool = table.filter(pl.col("draft_year").is_in(years))
+        train = table.filter(~pl.col("draft_year").is_in(years))
+    else:
+        pool, train = table, table
+
+    finite = pl.col(target_col).is_not_null() & pl.col(target_col).is_not_nan()
+    if train.filter(finite).height < 2:  # not enough signal once the pool is removed -> use all
+        train = table
+    service = build_service_from_table(
+        train, feature_cols, target_col=target_col, reached_col=reached_col, seed=seed
+    )
+    if "full_name" not in pool.columns:
+        pool = pool.with_columns(
+            ("Prospect " + pl.col("player_id").cast(pl.Utf8)).alias("full_name")
+        )
+    return service, pool

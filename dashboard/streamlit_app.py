@@ -10,12 +10,14 @@ The demo is trained on the SYNTHETIC fixture — for wiring/UX only, no basketba
 
 from __future__ import annotations
 
+import os
+
 import plotly.express as px
 import polars as pl
 import streamlit as st
 
 from nba_draft.fit import Player, TeamContext, load_cba
-from nba_draft.service import build_demo_service
+from nba_draft.service import build_demo_service, build_service_from_master
 from nba_draft.service.board import TIER_LABELS
 
 st.set_page_config(page_title="NBA Draft AI", page_icon="🏀", layout="wide")
@@ -23,7 +25,14 @@ st.set_page_config(page_title="NBA Draft AI", page_icon="🏀", layout="wide")
 
 @st.cache_resource
 def get_service():  # type: ignore[no-untyped-def]
-    """Train (or load) the draft-board service once per session."""
+    """Train (or load) the draft-board service once per session.
+
+    Serves a REAL board if NBA_DRAFT_AI_MASTER points to a persisted serving dir/manifest
+    (written by scripts/run_real_pipeline.py); otherwise the synthetic demo service.
+    """
+    master = os.environ.get("NBA_DRAFT_AI_MASTER")
+    if master:
+        return build_service_from_master(master)
     return build_demo_service()
 
 

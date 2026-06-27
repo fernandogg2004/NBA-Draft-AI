@@ -36,6 +36,17 @@ uvicorn api.main:app --reload                 # API docs at http://localhost:800
 streamlit run dashboard/streamlit_app.py      # GM dashboard at http://localhost:8501
 ```
 
+By default both serve the **synthetic demo** so they run with no data or secrets. To serve a **real
+board**, point `NBA_DRAFT_AI_MASTER` at the `serving/` directory written by the real pipeline (see
+below) — the API/dashboard then build a `DraftBoardService` from the persisted modeling table,
+hold the most recent draft class out as the prospect pool, and rank it by unconditional EV. A bad
+path fails closed to the demo (the API logs it) rather than crashing:
+
+```bash
+NBA_DRAFT_AI_MASTER=artifacts/real_pipeline/serving uvicorn api.main:app
+NBA_DRAFT_AI_MASTER=artifacts/real_pipeline/serving streamlit run dashboard/streamlit_app.py
+```
+
 API endpoints: `GET /health`, `GET /prospects`, `GET /explain/{player_id}`, `POST /fit`.
 
 The served board is ranked by the **survivorship-robust hurdle** when one is attached (the demo
@@ -52,7 +63,9 @@ service and any real table with a `reached` column): each prospect carries `p_re
    ing.draft_history(2025); ing.draft_combine_stats("2025"); ing.player_season_stats("2024-25")
    ```
 2. Build the master dataset with `nba_draft.cleaning.master.build_master(...)`.
-3. Point `service.build_demo_service`'s training data at the real master dataset, then re-serve.
+3. Run `python scripts/run_real_pipeline.py` — it persists a `serving/` directory
+   (`modeling_table.parquet` + `serving_manifest.json`) under `artifacts/real_pipeline/`.
+4. Serve it by setting `NBA_DRAFT_AI_MASTER=artifacts/real_pipeline/serving` (see *Serve the app*).
 
 ## Add real college pre-draft features (CollegeBasketballData.com)
 

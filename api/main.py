@@ -9,6 +9,7 @@ Run locally:  uvicorn api.main:app --reload
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Any
 
@@ -17,7 +18,14 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from nba_draft.fit import Player, TeamContext, load_cba
-from nba_draft.service import DraftBoardService, build_demo_service
+from nba_draft.service import (
+    DraftBoardService,
+    build_demo_service,
+    build_service_from_master,
+)
+from nba_draft.utils.logging import get_logger
+
+log = get_logger("api")
 
 app = FastAPI(
     title="NBA Draft AI",
@@ -28,6 +36,20 @@ app = FastAPI(
 
 @lru_cache(maxsize=1)
 def _service_and_pool() -> tuple[DraftBoardService, pl.DataFrame]:
+    """Serve a real board if NBA_DRAFT_AI_MASTER points to a persisted serving dir/manifest.
+
+    Set ``NBA_DRAFT_AI_MASTER`` to the ``serving/`` directory (or its ``serving_manifest.json``)
+    written by ``scripts/run_real_pipeline.py``; otherwise the synthetic demo service is served so
+    the API runs out of the box. A bad path fails closed to the demo (logged), never crashing boot.
+    """
+    master = os.environ.get("NBA_DRAFT_AI_MASTER")
+    if master:
+        try:
+            service, pool = build_service_from_master(master)
+            log.info("Serving REAL board from %s (%d prospects).", master, pool.height)
+            return service, pool
+        except Exception:  # noqa: BLE001 - never let a bad path break the service; fall back
+            log.exception("Failed to load real master from %s; falling back to demo.", master)
     return build_demo_service()
 
 
