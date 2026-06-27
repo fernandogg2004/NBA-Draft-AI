@@ -15,6 +15,7 @@ from typing import Any
 
 import polars as pl
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from nba_draft.fit import Player, TeamContext, load_cba
@@ -31,6 +32,23 @@ app = FastAPI(
     title="NBA Draft AI",
     version="0.1.0",
     description="Decision-support: projections, uncertainty, fit, and explanations.",
+)
+
+# Allow the React frontend (Vite dev server / any deployed origin) to call the API
+# directly. In dev the Vite proxy makes requests same-origin, so this mainly covers
+# running the SPA against the API without the proxy. Override via NBA_DRAFT_AI_CORS
+# (comma-separated origins); defaults to localhost dev ports.
+_cors_env = os.environ.get("NBA_DRAFT_AI_CORS")
+_cors_origins = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env
+    else ["http://localhost:5173", "http://127.0.0.1:5173"]
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
