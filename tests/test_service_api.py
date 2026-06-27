@@ -187,3 +187,24 @@ def test_build_service_from_table_attaches_hurdle_when_reach_present():
     merged = board.join(table.select("player_id", "f_skill"), on="player_id")
     corr = np.corrcoef(merged["p_reach"].to_numpy(), merged["f_skill"].to_numpy())[0, 1]
     assert corr > 0.4
+
+
+def test_build_service_from_table_rejects_post_draft_feature():
+    import numpy as np
+    import polars as pl
+
+    from nba_draft.service import build_service_from_table
+
+    rng = np.random.default_rng(2)
+    n = 20
+    table = pl.DataFrame(
+        {
+            "player_id": list(range(n)),
+            "full_name": [f"P{i}" for i in range(n)],
+            "f_skill": rng.normal(size=n),
+            "peak_impact": rng.normal(size=n),  # post-draft label, must not be a feature
+        }
+    )
+    # using a known post-draft column as a feature must trip the leakage guard
+    with pytest.raises(ValueError, match="leakage"):
+        build_service_from_table(table, ["f_skill", "peak_impact"], target_col="peak_impact")

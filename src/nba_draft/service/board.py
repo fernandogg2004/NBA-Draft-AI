@@ -194,6 +194,11 @@ def build_service_from_table(
     ``reached_col`` is present, a survivorship-robust hurdle is also fit over ALL prospects and the
     served board ranks by unconditional EV. The fold preprocessor is fit on the training rows.
     """
+    # Leakage guard: the served feature matrix must contain no known post-draft columns (mirrors
+    # the real modeling path in realdata.build.evaluate_real_models).
+    from nba_draft.features import assert_pre_draft_safe
+
+    assert_pre_draft_safe(train_table.select([c for c in feature_cols if c in train_table.columns]))
     # A finite target marks a reached prospect (polars NaN is not null, so guard both).
     has_target = pl.col(target_col).is_not_null() & pl.col(target_col).is_not_nan()
     reached_rows = train_table.filter(has_target)
