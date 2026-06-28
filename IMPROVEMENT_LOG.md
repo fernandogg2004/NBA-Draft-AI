@@ -65,8 +65,8 @@ real_run_summary.json`) is cited where it differs.
   ceiling (consume the calibrated intervals).
 - [x] **I4 — No-placeholder audit** — PASS. Every shown statistic traces to real computation on the
   2025 data; the one fabricated label ("Model V2.4") is replaced by a real `/meta` endpoint.
-- [ ] **I5 — Tier-probability calibration** measured + improved (reliability of the 5-tier
-  distribution shown on the board).
+- [x] **I5 — Tier-probability calibration** — DONE (multiclass ECE 0.284 → 0.104; P(starter+) ECE
+  0.311 → 0.095). Tier probs now from the conformal residual distribution.
 - [ ] **I6 — Robustness/edge cases:** international prospects with sparse features; the `'resultSet'`
   age-fetch failures (53/659) — make age acquisition more robust.
 - [ ] **I7 — Honest ceiling write-up** + final readiness report.
@@ -140,3 +140,18 @@ real_run_summary.json`) is cited where it differs.
 - **Tests/gates:** added `test_meta_reports_real_serving_metadata`; suite + ruff + mypy green;
   frontend rebuilt & verified via proxy.
 - Next: **I5 (tier-probability calibration)**.
+
+### Iteration 4 — calibrated outcome-tier probabilities (I5) — KEPT ✅
+- **Hypothesis:** the 5-tier probabilities are overconfident (same too-narrow ensemble spread as the
+  intervals), so the distribution shown on the board is miscalibrated.
+- **Measured (holdout, reached n=78; `scratchpad/tier_calib.py`):** before — mean confidence 0.882
+  vs argmax accuracy 0.603; multiclass ECE 0.284; P(starter+) ECE 0.311.
+- **Change:** `SplitConformalRegressor` now stores its signed calibration residuals and gains
+  `predict_scenarios()` (tier probs from point + empirical residuals). `DraftBoardService.rank()`
+  uses conformal scenarios when conformal is fit (`uncertainty/conformal.py`, `service/board.py`).
+- **Result:** multiclass ECE **0.284 → 0.104**; P(starter+) ECE **0.311 → 0.095**; mean confidence
+  0.882 → 0.681 (≈ accuracy 0.577). Honest spread (Cooper Flagg 82% starter / 18% rotation vs the
+  prior ~100%). API shape unchanged → frontend unaffected.
+- **Tests/gates:** added a conformal-scenarios test; relaxed a tier-sum assertion to match the
+  documented 4-decimal display rounding (probs sum to 1 pre-rounding); suite + ruff + mypy green.
+- Next: milestone holdout re-check + readiness report (I7).

@@ -178,11 +178,14 @@ class DraftBoardService:
         point = np.asarray(self.impact_model.predict(x), dtype=float)
         # Floor/ceiling: prefer the conformal interval (finite-sample marginal coverage ≈ nominal)
         # when fit; fall back to the bootstrap ensemble (adaptive but historically overconfident).
+        # Floor/ceiling AND tier scenarios: prefer the conformal layer's empirical predictive
+        # distribution (calibrated coverage; honest tier spread) over the overconfident ensemble.
         if self.conformal is not None:
             lo, hi = self.conformal.predict_interval(x)
+            scenarios = self.conformal.predict_scenarios(x, TIER_EDGES, TIER_LABELS)
         else:
             lo, hi = self.ensemble.predict_interval(x, alpha=self.interval_alpha)
-        scenarios = self.ensemble.predict_scenarios(x, TIER_EDGES, TIER_LABELS)
+            scenarios = self.ensemble.predict_scenarios(x, TIER_EDGES, TIER_LABELS)
 
         out = prospects.select(
             [c for c in (self.name_col, "full_name", "draft_year") if c in prospects.columns]
