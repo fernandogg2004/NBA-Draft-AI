@@ -62,9 +62,11 @@ def main() -> None:
         result.n_drafted, result.n_resolved, result.model_version, result.holdout_years,
     )
     log.info("Survivorship-robust HURDLE ranking (target = realized value over ALL prospects):")
-    log.info("  hurdle    CV spearman      = %.3f", result.hurdle_cv_spearman)
-    log.info("  hurdle    HOLDOUT spearman = %.3f  (headline)", result.hurdle_holdout_spearman)
-    log.info("  baseline  HOLDOUT spearman = %.3f", result.baseline_holdout_spearman)
+    log.info("  hurdle    CV spearman       = %.3f", result.hurdle_cv_spearman)
+    log.info("  SERVED    HOLDOUT spearman  = %.3f  (headline — matches the API/dashboard)",
+             result.served_holdout_spearman)
+    log.info("  gbm-eval  HOLDOUT spearman  = %.3f  (context)", result.hurdle_holdout_spearman)
+    log.info("  baseline  HOLDOUT spearman  = %.3f", result.baseline_holdout_spearman)
     log.info("summary -> %s", result.summary_path)
 
 

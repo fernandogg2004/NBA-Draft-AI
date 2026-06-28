@@ -74,6 +74,20 @@ def test_parse_player_awards_empty_is_zero():
     assert parse_player_awards(_payload(["PERSON_ID", "DESCRIPTION"], [])) == (0, 0)
 
 
+def test_safe_endpoint_json_falls_back_to_empty_on_error():
+    # A per-player nba_api parse quirk must yield a valid empty payload (cached), not crash, so the
+    # downstream parsers return null/zero instead of aborting the batch.
+    from nba_draft.ingestion.nba_stats import _safe_endpoint_json
+    from nba_draft.ingestion.parse import parse_player_awards, parse_player_info
+
+    def boom():
+        raise KeyError("resultSet")
+
+    payload = _safe_endpoint_json(boom, what="CommonPlayerInfo", key=123)
+    assert parse_player_info(payload)["birthdate"] is None
+    assert parse_player_awards(payload) == (0, 0)
+
+
 def test_parse_combine_casts_measurements():
     raw = _payload(
         ["SEASON", "PLAYER_ID", "FIRST_NAME", "LAST_NAME", "PLAYER_NAME", "POSITION",

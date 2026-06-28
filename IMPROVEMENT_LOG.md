@@ -134,6 +134,25 @@ real_run_summary.json`) is cited where it differs.
 - **Tests/gates:** unit test (label alignment, unseen tiers→0, sums to 1) + service wiring test;
   suite + ruff + mypy + frontend green.
 
+### N3 — align eval and served model — KEPT ✅
+- **Problem:** the reported headline was the **GBM** hurdle eval, but the **served** model is the
+  **ridge** hurdle (different — and the ridge actually scores better on the holdout).
+- **Change:** `evaluate_real_models` now also builds the **actual served model**
+  (`build_service_from_table` on dev), ranks the untouchable holdout, and reports
+  `served_holdout_spearman` as the headline (GBM head kept as context). Added to the run summary +
+  `RealPipelineResult`; the script logs the SERVED number as the headline.
+- **Result (cached re-eval):** served **0.469** (honest headline, matches the API) vs GBM-eval
+  0.453 vs baseline 0.516. The reported number now equals what's served.
+
+### N4 — harden per-player acquisition — KEPT ✅
+- **Problem:** ~8% of players (deterministic IDs) raise a `'resultSet'` KeyError inside nba_api at
+  fetch time → never cached → retried every run (and would block in datacenter envs).
+- **Change:** `_safe_endpoint_json` wraps the per-player endpoints (`player_info`, `player_awards`);
+  on any nba_api parse/transport error it logs and returns a valid **empty** payload, which the
+  cache stores — so those players resolve once to null age / zero honors (imputed) and are **not
+  re-fetched**. Added a unit test.
+- **Note:** clears-on-cache-clear if a future nba_api/network fix makes them parseable.
+
 ## Iteration log
 
 ### Iteration 0 — scoreboard + lock
