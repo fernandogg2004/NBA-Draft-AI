@@ -89,6 +89,16 @@ class FitRequest(BaseModel):
     season: str | None = None
 
 
+class BoardFitRequest(BaseModel):
+    """Re-rank the whole board by fit to a roster context (no specific prospect)."""
+
+    roster: list[RosterPlayer]
+    team_total_salary_usd: float = 0.0
+    pick: int = Field(ge=1)
+    season: str | None = None
+    limit: int = 60
+
+
 # ----------------------------------------------------------------- endpoints
 @app.get("/meta")
 def meta() -> dict[str, Any]:
@@ -177,6 +187,46 @@ def counterfactual(player_id: int, max_features: int = 3) -> dict[str, Any]:
             for c in cf.changes
         ],
     }
+
+
+@app.post("/board_fit")
+def board_fit(req: BoardFitRequest) -> list[dict[str, Any]]:
+    """Re-rank the enriched board by FIT to a roster context (lineup Δ + synergy + apron surplus).
+
+    Each prospect is scored with the real fit module against the submitted roster + cap + pick, then
+    the board is sorted by overall fit (descending). Rows keep all the /prospects fields (so the UI
+    can still show actual pick / steal-reach) plus ``fit_*`` columns. ``model_rank`` remains the
+    talent-EV rank, so the steal/reach signal is unchanged.
+    """
+    service, pool = _service_and_pool()
+    enriched = {int(r["player_id"]): r for r in service.ranked_with_profile(pool).to_dicts()}
+    team = TeamContext(
+        roster=[Player(p.name, p.skills, p.impact, p.salary_usd) for p in req.roster],
+        total_salary_usd=req.team_total_salary_usd,
+    )
+    cba = load_cba(season=req.season) if req.season else load_cba()
+    rows: list[dict[str, Any]] = []
+    for r in pool.iter_rows(named=True):
+        pid = int(r["player_id"])
+        row = pool.filter(pl.col("player_id") == pid)
+        result = service.fit_for_team(
+            row, team, pick=req.pick, cba=cba, name=str(r.get("full_name"))
+        )
+        base = dict(enriched.get(pid, {"player_id": pid}))
+        base.update(
+            fit_overall=result.overall,
+            fit_basketball=result.basketball_fit,
+            fit_financial=result.financial_fit,
+            fit_lineup_delta=result.lineup.delta,
+            fit_rsv_modulated_usd=result.rsv_modulated_usd,
+            fit_apron_label=result.apron_label,
+        )
+        rows.append(base)
+    rows.sort(key=lambda d: d["fit_overall"], reverse=True)
+    # fit_rank reflects the new (fit) ordering; model_rank stays the talent-EV rank.
+    for i, d in enumerate(rows, 1):
+        d["fit_rank"] = i
+    return rows[: req.limit]
 
 
 @app.post("/fit")

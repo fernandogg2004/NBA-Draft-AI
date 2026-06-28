@@ -10,7 +10,16 @@ import type {
   FitRequest,
   FitResult,
   ProspectRow,
+  RosterPlayer,
 } from "./types";
+
+export interface BoardFitRequest {
+  roster: RosterPlayer[];
+  team_total_salary_usd: number;
+  pick: number;
+  season?: string | null;
+  limit?: number;
+}
 
 const BASE = (import.meta.env.VITE_API_BASE ?? "/api").replace(/\/$/, "");
 
@@ -68,6 +77,12 @@ export const api = {
 
   fit: (body: FitRequest) =>
     request<FitResult>("/fit", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  boardFit: (body: BoardFitRequest) =>
+    request<ProspectRow[]>("/board_fit", {
       method: "POST",
       body: JSON.stringify(body),
     }),
