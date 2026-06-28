@@ -327,6 +327,26 @@ def test_fit_endpoint(client):
     assert delta == pytest.approx(body["lineup_delta"], abs=0.01)
 
 
+def test_board_fit_endpoint_reranks_by_fit(client):
+    payload = {
+        "roster": [
+            {"name": "S1", "skills": {"scoring": 82, "shooting_spacing": 80}, "impact": 2.0}
+        ],
+        "team_total_salary_usd": 179_000_000,
+        "pick": 14,
+        "limit": 10,
+    }
+    r = client.post("/board_fit", json=payload)
+    assert r.status_code == 200
+    body = r.json()
+    assert 0 < len(body) <= 10
+    overalls = [row["fit_overall"] for row in body]
+    assert overalls == sorted(overalls, reverse=True)  # sorted by overall fit
+    assert [row["fit_rank"] for row in body] == list(range(1, len(body) + 1))
+    # talent-EV model_rank retained (steal/reach unaffected) + lineup delta present.
+    assert all("model_rank" in row and "fit_lineup_delta" in row for row in body)
+
+
 def test_counterfactual_endpoint_and_404(client):
     _, pool = build_demo_service()
     pid = int(pool["player_id"][0])

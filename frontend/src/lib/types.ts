@@ -60,6 +60,14 @@ export interface ProspectRow {
   max_vertical_in?: number;
   lane_agility_s?: number;
   body_fat_pct?: number;
+  // Team-fit fields (present only on /board_fit responses).
+  fit_overall?: number;
+  fit_basketball?: number;
+  fit_financial?: number;
+  fit_lineup_delta?: number;
+  fit_rsv_modulated_usd?: number;
+  fit_apron_label?: string;
+  fit_rank?: number;
   skill_scoring?: number;
   skill_shooting_spacing?: number;
   skill_playmaking?: number;
