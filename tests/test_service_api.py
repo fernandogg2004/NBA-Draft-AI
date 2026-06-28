@@ -212,6 +212,15 @@ def test_health(client):
     assert r.json()["status"] == "ok"
 
 
+def test_meta_reports_real_serving_metadata(client):
+    # The default test app serves the synthetic demo (no NBA_DRAFT_AI_MASTER set).
+    r = client.get("/meta")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mode"] in {"demo", "real"}
+    assert body["n_prospects"] > 0  # real count from the served pool, not a fabricated string
+
+
 def test_prospects_endpoint_returns_ranked_board(client):
     r = client.get("/prospects?limit=5")
     assert r.status_code == 200
