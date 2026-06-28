@@ -9,7 +9,8 @@ stats.nba.com; 2026 is not yet published). See `IMPROVEMENT_LOG.md` for the per-
 
 | Metric | Before (Iter 0) | After | Target |
 |---|---:|---:|---|
-| Served ranking — Spearman | 0.263 (scouting-only) | **0.497** (consensus-anchored) | ≥ baseline |
+| Served ranking — Spearman | 0.263 (scouting-only) | **0.469** (consensus-anchored, 954-sample) | ≥ baseline |
+| Hurdle CV Spearman (dev walk-forward) | 0.426 | **0.587** | — |
 | Draft-position baseline — Spearman | 0.516 | 0.516 | — |
 | 80% prediction-interval coverage | 0.346 | **0.808** | ≈ 0.80 |
 | Outcome-tier multiclass ECE | 0.284 | **0.104** | low |
@@ -62,17 +63,29 @@ stats.nba.com; 2026 is not yet published). See `IMPROVEMENT_LOG.md` for the per-
 - Explicit, calibrated **disagreements with the consensus** (steals/reaches) as research leads.
 
 ## Honest remaining limitations
-- **Ceiling:** public box-score/combine/age features do **not** beat 30-team consensus on this
-  sample/era; the model matches it. More signal needs more eras/targets (below).
+- **Ceiling is structural, not a sample-size artifact.** We doubled the sample (594 → 954 resolved,
+  classes 2005–2020): CV rose to 0.587 but the unbiased holdout ranking stayed ~0.47 (< baseline
+  0.516). Public box-score/combine/age features genuinely lack marginal signal over the 30-team
+  consensus. Beating it requires a **new, orthogonal data source** (recruiting rankings, player
+  tracking, scouting grades), not more rows of the same features.
 - Projections are BPM-scale and regress toward the mean; intervals are calibrated but wide (±~0.9).
 - Board is **2025** (2026 not yet on stats.nba.com).
 - Eval headline uses a GBM hurdle while the served model is a ridge hurdle (~similar); could align.
 - Real-data pull is **gated** to a residential IP + `CBD_API_KEY` (stats.nba.com blocks datacenters).
 
 ## Recommended next steps (need more data / compute / human input)
-1. **More eras / larger sample** (pre-2011 + future classes) → the only real path past the ceiling;
-   enables era adjustment and a fair test of whether model–consensus disagreements are profitable.
-2. **Add marginal signal:** honors (All-Star/All-NBA) labels, richer international + dynamic SoS,
-   defensive tracking — features plausibly orthogonal to draft order.
-3. **Align eval and served model**, and optionally tune the served ridge path.
+1. **A genuinely orthogonal pre-draft source** — recruiting rankings (247/RSCI), player-tracking, or
+   scouting grades. This is now the *only* demonstrated path past the ceiling: more rows of the same
+   public features did not beat consensus (proven above), so the missing signal must be new in kind.
+2. **Honors-aware tier model** — now that real All-Star/All-NBA labels are ingested (26 all-star /
+   60 superstar tiers across 2005–2025), train/calibrate the board's tier probabilities against the
+   honors-aware `outcome_tier` instead of pure BPM bands.
+3. **Align eval and served model** (GBM-eval vs ridge-served), and optionally tune the served path.
 4. **Harden age acquisition** (the `'resultSet'` failures) on a networked machine.
+
+## Update log
+- **Eras + honors (post-exit, user-directed):** sample 594 → 954 (classes 2005–2020); CV
+  0.426 → 0.587; holdout served ranking 0.497 → 0.469 (still < 0.516) — confirms the ceiling is
+  structural. Real honors ingested (PlayerAwards) and enriching the top outcome tiers. The served
+  2025 board is unchanged in character (Cooper Flagg #1; steals/reaches retained) but better
+  grounded (2× training data). See `IMPROVEMENT_LOG.md` (I8, I9).

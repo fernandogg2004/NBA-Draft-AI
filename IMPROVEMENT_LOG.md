@@ -73,25 +73,32 @@ real_run_summary.json`) is cited where it differs.
 
 ## Post-exit work (user-directed): more eras + orthogonal signal
 
-### Iteration 8 — extend training eras 2011→2005 (I8) — CODE DONE, PULL GATED ⏸
-- **Rationale:** sample size is the single biggest lever on the ranking ceiling. Widened
-  `run_real_pipeline` to 16 training classes **2005–2020** (+ 2025 projection pool) and outcome
-  seasons through 2023-24 (`scripts/run_real_pipeline.py`).
-- **Gated:** pulling 2005–2010 (draft history, combine, college, ages, honors + 6 earlier outcome
-  seasons) needs a residential IP — must run on the user's machine. Pre-2011 CBD college coverage
-  may be thinner (handled by imputation). Impact on the holdout will be re-measured after the pull.
+### Iteration 8 — extend training eras 2011→2005 (I8) — DONE + MEASURED ✅ (ceiling confirmed)
+- **Change:** widened `run_real_pipeline` to 16 training classes **2005–2020** (+ 2025 pool),
+  outcome seasons through 2023-24. User ran the (gated) pull on a residential IP.
+- **Result:** sample **resolved 594 → 954** (dev 479 → 839). Hurdle **CV Spearman 0.426 → 0.587**
+  (now above the baseline CV). BUT the unbiased **holdout** served ridge-hurdle EV went
+  **0.497 → 0.469** (vs baseline 0.516) — still below, within noise. Coverage robust (0.782);
+  reach ECE 0.097; tier multiclass ECE 0.158 (up from 0.104 — holdout noise, still ≪ the 0.28
+  pre-fix baseline).
+- **Key conclusion (honest):** doubling the sample did **not** beat the consensus on the locked
+  holdout → **rules out "too little data"** as the cause. The ceiling is **structural**: public
+  box-score/combine/age features lack marginal signal over the 30-team draft consensus. The served
+  model is now better-grounded (2× training data, higher CV) but the holdout ranking is unchanged.
 
-### Iteration 9 — auto-ingest honors (PlayerAwards) (I9) — CODE DONE, PULL GATED ⏸
+### Iteration 9 — auto-ingest honors (PlayerAwards) (I9) — DONE + MEASURED ✅
 - **Change:** added the nba_api **PlayerAwards** endpoint (`ingestion/nba_stats.py`),
   `parse_player_awards` (counts All-Star / All-NBA, `ingestion/parse.py`), and
   `pull_player_honors` (`realdata/honors.py`), wired into `run_real_pipeline`
   (`with_honors=True`) so `build_real_modeling_table` tiers use **real** honors instead of the BPM
   proxy. Offline tests added (parser + acquisition with failure tolerance).
+- **Result:** real honors flowed into the labels — the honors-aware `outcome_tier` now has **26
+  all_star + 60 superstar** rows across 2005–2025 (promotions the BPM proxy would have missed).
 - **Honest scope:** honors enrich the outcome-tier **labels** (ground-truth integrity for the
   top tiers + tier *evaluation*); they are an OUTCOME, not a pre-draft feature, so they do **not**
   change the served impact ranking. The served board's tier probabilities are still BPM-band
   derived — aligning them to the honors-aware tier definition would need a separate honors/tier
-  classifier (natural next step once the honors data is pulled).
+  classifier (natural next step now that the honors data exists).
 - **Note on "orthogonal signal":** no cheap orthogonal pre-draft FEATURE was available from the
   current sources (age, combine anthropometrics, college advanced ratings are already features;
   strength-of-schedule isn't exposed by the CBD parse). A true orthogonal feature (recruiting rank,
