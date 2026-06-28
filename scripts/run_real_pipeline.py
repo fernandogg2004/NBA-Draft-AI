@@ -46,10 +46,13 @@ def main() -> None:
         ing, draft_years=DRAFT_YEARS, outcome_seasons=OUTCOME_SEASONS,
         cbd_ingester=cbd, intl_ingester=intl, min_train_years=4, n_holdout_years=2,
         tune=True, n_trials=30,
-        # Scouting-only board: keep draft_pick OUT of the model features so the served ranking is
-        # independent of where players were actually picked -> honest "steals & reaches". The pick
-        # is still kept as a column for display + the draft-position baseline comparison.
-        exclude_pick_feature=True,
+        # Consensus-anchored board: the draft pick IS legitimate pre-draft information (the 30-team
+        # consensus, known before any outcome). A pick-free model ranks WORSE than the draft order
+        # (holdout Spearman ~0.26 vs ~0.52) — misleading as a board. Including the pick makes the
+        # served ranking MATCH the baseline (~0.50) while the EV still reorders enough to surface
+        # model-vs-consensus disagreements (steals/reaches), which are exploratory, not validated to
+        # beat the room. See IMPROVEMENT_LOG.md (I2) for the measured ceiling.
+        exclude_pick_feature=False,
     )
     log.info(
         "drafted=%d  resolved=%d  model=%s  holdout=%s",
