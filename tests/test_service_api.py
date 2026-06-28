@@ -32,9 +32,10 @@ def test_rank_returns_projection_interval_and_scenarios(service_and_pool):
     assert ((board["p_reach"] >= 0.0) & (board["p_reach"] <= 1.0)).all()
     # floor <= ceiling for every prospect
     assert (board["floor"] <= board["ceiling"]).all()
-    # scenario probabilities sum to ~1 per prospect
+    # scenario probabilities sum to ~1 per prospect (tolerance covers 4-decimal display rounding
+    # across the 5 tiers; they sum to exactly 1 before rounding).
     probs = board.select([f"p_{t}" for t in TIER_LABELS]).to_numpy().sum(axis=1)
-    assert all(abs(p - 1.0) < 1e-6 for p in probs)
+    assert all(abs(p - 1.0) < 1e-3 for p in probs)
 
 
 def test_conformal_interval_is_attached_and_calibrated(service_and_pool):
