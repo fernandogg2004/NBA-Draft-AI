@@ -190,6 +190,7 @@ class RealPipelineResult:
     n_resolved: int
     hurdle_cv_spearman: float = float("nan")
     hurdle_holdout_spearman: float = float("nan")
+    served_holdout_spearman: float = float("nan")
     baseline_holdout_spearman: float = float("nan")
     longevity_concordance: float = float("nan")
     holdout_years: tuple[int, ...] = ()
@@ -358,6 +359,26 @@ def evaluate_real_models(
             }
         )
 
+        # Evaluate the ACTUAL served model (ridge hurdle from build_service_from_table) on the same
+        # untouchable holdout, so the reported headline matches what the API/dashboard serve — not
+        # just the GBM eval head. Ranks by the served projected_ev vs realized value.
+        served_holdout = float("nan")
+        try:
+            from nba_draft.service import build_service_from_table
+
+            served_svc = build_service_from_table(
+                dev, feature_cols, target_col=TARGET_COLUMN, reached_col="reached"
+            )
+            served_board = served_svc.rank(holdout).join(
+                holdout.select(["player_id", "realized"]), on="player_id"
+            )
+            served_holdout = spearman_corr(
+                served_board["realized"].to_numpy().astype(float),
+                served_board["projected_ev"].to_numpy().astype(float),
+            )
+        except Exception:  # noqa: BLE001 - eval-only convenience; never break the pipeline
+            log.exception("served-model holdout eval failed (reporting GBM head only)")
+
         version = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
         register_model(
             hurdle, name="real_hurdle", version=version,
@@ -378,13 +399,15 @@ def evaluate_real_models(
             "gbm_tuned_params": best_params,
             "hurdle_cv_spearman": hurdle_cv_spearman,
             "hurdle_holdout_spearman": float(hurdle_holdout),
+            "served_holdout_spearman": float(served_holdout),
             "baseline_holdout_spearman": float(base_holdout),
             "longevity_concordance": float(longevity_c),
             "model_version": version,
             "note": (
-                "Production ranking = survivorship-robust hurdle (reach × impact). Headline is the "
-                "UNTOUCHABLE-HOLDOUT Spearman; tuning/CV never see the holdout. Longevity = Cox PH "
-                "career-length concordance on the holdout."
+                "Ranking = survivorship-robust hurdle (reach x impact). served_holdout_spearman is "
+                "the SERVED ridge hurdle (honest headline, matches the API/dashboard); "
+                "hurdle_holdout_spearman is the GBM eval head for context. The holdout is "
+                "untouchable (tuning/CV never see it). Longevity = Cox PH concordance on holdout."
             ),
         }
         summary_path = out / "real_run_summary.json"
@@ -417,6 +440,7 @@ def evaluate_real_models(
         n_resolved=resolved.height,
         hurdle_cv_spearman=hurdle_cv_spearman,
         hurdle_holdout_spearman=float(hurdle_holdout),
+        served_holdout_spearman=float(served_holdout),
         baseline_holdout_spearman=float(base_holdout),
         longevity_concordance=float(longevity_c),
         holdout_years=split.holdout_years,
