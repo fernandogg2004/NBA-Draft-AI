@@ -19,6 +19,7 @@ import { RangeBar, TierBar } from "../components/charts";
 export function DraftBoard() {
   const navigate = useNavigate();
   const { data, loading, error, reload } = useAsync(() => api.prospects(60), []);
+  const { data: meta } = useAsync(() => api.meta(), []);
 
   // Shared domain for the floor/ceiling range bars so rows are comparable.
   const domain = useMemo(() => {
@@ -71,7 +72,11 @@ export function DraftBoard() {
             </div>
           </div>
           <Chip tone="primary" className="hidden sm:inline-block">
-            Model V2.4 Active
+            {meta
+              ? meta.mode === "real"
+                ? `Model ${meta.model_version ?? "real"} · ${meta.n_features ?? "?"} feats`
+                : "Synthetic demo"
+              : "…"}
           </Chip>
         </Card>
       </div>

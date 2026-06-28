@@ -9,8 +9,10 @@ Run locally:  uvicorn api.main:app --reload
 
 from __future__ import annotations
 
+import json
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import polars as pl
@@ -88,6 +90,32 @@ class FitRequest(BaseModel):
 
 
 # ----------------------------------------------------------------- endpoints
+@app.get("/meta")
+def meta() -> dict[str, Any]:
+    """Real serving metadata for the UI (no fabricated version strings).
+
+    Reports whether a REAL board (from NBA_DRAFT_AI_MASTER) or the synthetic demo is served, the
+    pool size, the draft class(es) projected, and — for the real path — the trained model version
+    and feature count read from the serving manifest.
+    """
+    _, pool = _service_and_pool()
+    master = os.environ.get("NBA_DRAFT_AI_MASTER")
+    info: dict[str, Any] = {"mode": "demo", "n_prospects": int(pool.height)}
+    if "draft_year" in pool.columns and pool.height:
+        info["draft_years"] = sorted({int(y) for y in pool["draft_year"].to_list()})
+    if master:
+        try:
+            mp = Path(master)
+            mp = mp if mp.suffix == ".json" else mp / "serving_manifest.json"
+            manifest = json.loads(mp.read_text(encoding="utf-8"))
+            info["mode"] = "real"
+            info["model_version"] = manifest.get("model_version")
+            info["n_features"] = len(manifest.get("feature_cols", []))
+        except Exception:  # noqa: BLE001 - meta is best-effort; never break on a bad manifest
+            log.exception("Could not read serving manifest for /meta")
+    return info
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}

@@ -63,8 +63,8 @@ real_run_summary.json`) is cited where it differs.
   consensus is NOT achievable on this sample/era (evidence below); "beat" is honestly scoped out.
 - [ ] **I3 — Coverage of intervals on the served board** wired through to the API/frontend floor/
   ceiling (consume the calibrated intervals).
-- [ ] **I4 — No-placeholder audit** end to end (service → API → frontend), re-run after each output
-  change; confirm every shown statistic is real on the 2025 board.
+- [x] **I4 — No-placeholder audit** — PASS. Every shown statistic traces to real computation on the
+  2025 data; the one fabricated label ("Model V2.4") is replaced by a real `/meta` endpoint.
 - [ ] **I5 — Tier-probability calibration** measured + improved (reliability of the 5-tier
   distribution shown on the board).
 - [ ] **I6 — Robustness/edge cases:** international prospects with sparse features; the `'resultSet'`
@@ -121,3 +121,22 @@ real_run_summary.json`) is cited where it differs.
 - **Tests/gates:** full suite + ruff + mypy green; frontend rebuilt; live board verified via proxy
   (Cooper Flagg #1; Thomas Sorber pick #15, steal +12; Dylan Harper pick #2, reach −3).
 - Next: **I4 (no-placeholder audit)**.
+
+### Iteration 3 — no-placeholder audit (I4) — KEPT ✅
+- **Audit:** traced every statistic the UI shows to its source on the real 2025 board:
+  - Board: `model_rank` (rank), `projected_ev`/`projected_impact` (hurdle model), `floor`/`ceiling`
+    (conformal), 5 tier probs (ensemble scenarios), `archetype`/`age`/`wingspan`/`skill_*` (features
+    via `prospect_to_player`), `draft_pick`/`team_abbr`/`position` (DraftHistory + Combine),
+    `slot_delta` (computed), `headshot_url` (real NBA id), `peak_pctile`/`projected_value_usd`
+    (computed). All real.
+  - Prospect Detail combine: wingspan 52/59, standing-reach 52/59, max-vertical 47/59, lane-agility
+    50/59 real; **body-fat 0/59 → honest "not measured"** (absent from the 2025 Combine feed).
+  - Explainability: SHAP contributions + counterfactual + top-local-drivers all real (`/explain`,
+    `/counterfactual`). Team Fit: gauge/sub-scores/lineup before-after/financial all from `/fit`.
+- **Only fabricated value found:** the decorative **"Model V2.4 Active"** chip. **Fixed:** added a
+  real **`GET /meta`** endpoint (serving mode, pool size, draft year(s), trained `model_version`,
+  feature count read from the manifest); the chip now shows real metadata (`mode=real`,
+  `model_version=20260628100900`, `n_features=22`, `draft_years=[2025]`) or "Synthetic demo".
+- **Tests/gates:** added `test_meta_reports_real_serving_metadata`; suite + ruff + mypy green;
+  frontend rebuilt & verified via proxy.
+- Next: **I5 (tier-probability calibration)**.

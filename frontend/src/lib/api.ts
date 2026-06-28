@@ -42,8 +42,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface Meta {
+  mode: "real" | "demo";
+  n_prospects: number;
+  draft_years?: number[];
+  model_version?: string;
+  n_features?: number;
+}
+
 export const api = {
   health: () => request<{ status: string }>("/health"),
+
+  meta: () => request<Meta>("/meta"),
 
   prospects: (limit = 60) =>
     request<ProspectRow[]>(`/prospects?limit=${encodeURIComponent(limit)}`),
