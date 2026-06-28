@@ -161,6 +161,58 @@ def test_ranked_with_profile_real_shaped_pool():
         assert r["headshot_url"].endswith(f"{r['player_id']}.png")
 
 
+def test_tier_probability_model_aligns_labels_and_sums_to_one():
+    import numpy as np
+
+    from nba_draft.models.tier import TierProbabilityModel
+
+    rng = np.random.default_rng(0)
+    n = 200
+    x = rng.normal(size=(n, 3))
+    # 3 of 5 tiers present in training (superstar/all_star absent) -> must still align to 5 labels.
+    y = (x[:, 0] > 0).astype(np.int64) + (x[:, 0] > 1).astype(np.int64)  # classes {0,1,2}
+    labels = ["bust", "rotation", "starter", "all_star", "superstar"]
+    model = TierProbabilityModel.fit(x, y, labels)
+    scen = model.predict_scenarios(x[:5])
+    for s in scen:
+        assert set(s) == set(labels)
+        assert abs(sum(s.values()) - 1.0) < 1e-3
+        assert s["all_star"] == 0.0 and s["superstar"] == 0.0  # unseen tiers -> 0
+
+
+def test_service_uses_honors_aware_tier_model_when_outcome_tier_present():
+    import numpy as np
+    import polars as pl
+
+    from nba_draft.service import build_service_from_table
+    from nba_draft.service.board import TIER_LABELS
+
+    rng = np.random.default_rng(1)
+    n = 120
+    skill = rng.normal(size=n)
+    peak = [float(2 * skill[i]) if skill[i] > -0.3 else None for i in range(n)]
+    tier = [
+        "superstar" if s > 1.5 else "all_star" if s > 1 else "starter" if s > 0
+        else "rotation" if s > -0.5 else "bust"
+        for s in skill
+    ]
+    table = pl.DataFrame(
+        {
+            "player_id": list(range(n)),
+            "full_name": [f"P{i}" for i in range(n)],
+            "draft_year": [2010 + (i % 6) for i in range(n)],
+            "f_skill": skill + rng.normal(scale=0.2, size=n),
+            "reached": [bool(s > -0.3) for s in skill],
+            "outcome_tier": tier,
+        }
+    ).with_columns(pl.Series("peak_impact", peak, dtype=pl.Float64))
+    svc = build_service_from_table(table, ["f_skill"])
+    assert svc.tier_model is not None
+    board = svc.rank(table)
+    P = board.select([f"p_{t}" for t in TIER_LABELS]).to_numpy()
+    assert np.all(np.abs(P.sum(axis=1) - 1.0) < 1e-2)
+
+
 def test_counterfactual_lifts_a_low_prospect_toward_next_tier(service_and_pool):
     import polars as pl
 

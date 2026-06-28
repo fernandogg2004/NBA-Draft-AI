@@ -104,6 +104,36 @@ real_run_summary.json`) is cited where it differs.
   strength-of-schedule isn't exposed by the CBD parse). A true orthogonal feature (recruiting rank,
   tracking data) needs a NEW source — gated/future.
 
+## Post-exit work — recommended next steps (N1–N4)
+
+### N1 — orthogonal source: CBD recruiting rankings — TESTED, NEGATIVE, NOT MERGED ❌
+- **Idea:** high-school recruiting consensus (CBD `/recruiting/players`: rating/stars/rank) is a
+  *pre-college* opinion distinct from NBA draft order → possible orthogonal signal. CBD is reachable
+  from this environment, so it was testable here.
+- **Experiment (`scratchpad/recruit_experiment.py`):** pulled 9,110 recruits (2008–2024), linked by
+  normalized name to 461/1019 drafted (45%; internationals/unranked null), `corr(rating, realized)
+  =0.122`, `corr(rating, −pick)=0.228` (only partly orthogonal). Adding recruiting to the consensus
+  model: dev-CV **0.583 → 0.556** (worse), holdout **0.481 → 0.486** (flat); baseline still 0.516.
+- **Decision:** recruiting adds **no** marginal signal over the draft consensus → **not merged**
+  (validity over numbers). Reinforces the structural ceiling: even a different scouting consensus
+  doesn't beat the draft. A genuinely new signal would need *in-kind* novelty (tracking/biometric),
+  which is not freely available.
+
+### N2 — honors-aware tier model — KEPT ✅ (large calibration win)
+- **Problem:** the board's tier probabilities came from mapping one predicted BPM through fixed
+  bands. Against the **honors-aware** `outcome_tier` ground truth (real All-Star/All-NBA), that was
+  poorly calibrated: multiclass ECE **0.390**, accuracy 0.287.
+- **Change:** `TierProbabilityModel` (multinomial logistic) trained directly on `outcome_tier`
+  (`src/nba_draft/models/tier.py`); `build_service_from_table` fits it when the label is present and
+  `rank()` uses it for `p_<tier>` (priority: tier model → conformal → ensemble). Synthetic/demo path
+  (no `outcome_tier`) falls back to the conformal scenarios.
+- **Result (holdout, vs honors-aware tiers):** multiclass ECE **0.390 → 0.111**; accuracy
+  **0.287 → 0.548** (confidence 0.560 ≈ accuracy). Served 2025 board now meaningful, e.g. Cooper
+  Flagg 61% superstar / 22% starter (was a flat ~82% starter). API shape unchanged → frontend
+  unaffected.
+- **Tests/gates:** unit test (label alignment, unseen tiers→0, sums to 1) + service wiring test;
+  suite + ruff + mypy + frontend green.
+
 ## Iteration log
 
 ### Iteration 0 — scoreboard + lock
