@@ -105,6 +105,17 @@ class NbaStatsIngester:
 
         return self._cached_json("nba_api://CommonPlayerInfo", params, produce)
 
+    def player_awards(self, player_id: int) -> str:
+        """PlayerAwards for one player (All-Star / All-NBA selections etc.). One call per player."""
+        params = {"player_id": str(player_id)}
+
+        def produce() -> str:
+            from nba_api.stats.endpoints import playerawards
+
+            return _endpoint_json(playerawards.PlayerAwards(player_id=player_id))
+
+        return self._cached_json("nba_api://PlayerAwards", params, produce)
+
     def player_season_stats(self, season: str, measure_type: str = "Base") -> str:
         params = {"season": season, "measure_type": measure_type}
 

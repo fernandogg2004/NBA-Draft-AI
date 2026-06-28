@@ -71,6 +71,32 @@ real_run_summary.json`) is cited where it differs.
   age-fetch failures (53/659) — make age acquisition more robust.
 - [ ] **I7 — Honest ceiling write-up** + final readiness report.
 
+## Post-exit work (user-directed): more eras + orthogonal signal
+
+### Iteration 8 — extend training eras 2011→2005 (I8) — CODE DONE, PULL GATED ⏸
+- **Rationale:** sample size is the single biggest lever on the ranking ceiling. Widened
+  `run_real_pipeline` to 16 training classes **2005–2020** (+ 2025 projection pool) and outcome
+  seasons through 2023-24 (`scripts/run_real_pipeline.py`).
+- **Gated:** pulling 2005–2010 (draft history, combine, college, ages, honors + 6 earlier outcome
+  seasons) needs a residential IP — must run on the user's machine. Pre-2011 CBD college coverage
+  may be thinner (handled by imputation). Impact on the holdout will be re-measured after the pull.
+
+### Iteration 9 — auto-ingest honors (PlayerAwards) (I9) — CODE DONE, PULL GATED ⏸
+- **Change:** added the nba_api **PlayerAwards** endpoint (`ingestion/nba_stats.py`),
+  `parse_player_awards` (counts All-Star / All-NBA, `ingestion/parse.py`), and
+  `pull_player_honors` (`realdata/honors.py`), wired into `run_real_pipeline`
+  (`with_honors=True`) so `build_real_modeling_table` tiers use **real** honors instead of the BPM
+  proxy. Offline tests added (parser + acquisition with failure tolerance).
+- **Honest scope:** honors enrich the outcome-tier **labels** (ground-truth integrity for the
+  top tiers + tier *evaluation*); they are an OUTCOME, not a pre-draft feature, so they do **not**
+  change the served impact ranking. The served board's tier probabilities are still BPM-band
+  derived — aligning them to the honors-aware tier definition would need a separate honors/tier
+  classifier (natural next step once the honors data is pulled).
+- **Note on "orthogonal signal":** no cheap orthogonal pre-draft FEATURE was available from the
+  current sources (age, combine anthropometrics, college advanced ratings are already features;
+  strength-of-schedule isn't exposed by the CBD parse). A true orthogonal feature (recruiting rank,
+  tracking data) needs a NEW source — gated/future.
+
 ## Iteration log
 
 ### Iteration 0 — scoreboard + lock

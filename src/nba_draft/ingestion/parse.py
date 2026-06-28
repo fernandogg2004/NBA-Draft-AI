@@ -170,6 +170,22 @@ def parse_player_info(raw_json: str) -> dict[str, object]:
     }
 
 
+def parse_player_awards(raw_json: str) -> tuple[int, int]:
+    """PlayerAwards -> (all_star_count, all_nba_count) for one player.
+
+    Each award selection is one row; we count rows whose DESCRIPTION marks an All-Star or All-NBA
+    selection (case-insensitive). Unknown/empty payloads yield (0, 0). Robust to the column being
+    absent in odd payloads.
+    """
+    df = _result_frame(raw_json)
+    if df.height == 0 or "DESCRIPTION" not in df.columns:
+        return (0, 0)
+    descs = [str(d).lower() for d in df["DESCRIPTION"].to_list() if d is not None]
+    all_star = sum(1 for d in descs if "all-star" in d or "all star" in d)
+    all_nba = sum(1 for d in descs if "all-nba" in d or "all nba" in d)
+    return (all_star, all_nba)
+
+
 def parse_player_season(base_json: str, advanced_json: str, season: str) -> pl.DataFrame:
     """Join LeagueDashPlayerStats Base + Advanced into per-100 production + rate stats.
 
