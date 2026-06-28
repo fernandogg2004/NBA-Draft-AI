@@ -57,6 +57,22 @@ def test_parse_euroleague_empty():
     assert set(INTL_FEATURE_COLUMNS).issubset(df.columns)
 
 
+def test_euroleague_ingester_tolerates_unavailable_season(tmp_path, monkeypatch):
+    """A not-yet-played season (the API 404s) must yield empty WITHOUT caching, so the pull
+    doesn't crash and a later run can still fetch it once the season exists."""
+    from nba_draft.ingestion.euroleague import EuroLeagueIngester
+    from nba_draft.ingestion.http import RateLimiter
+
+    ing = EuroLeagueIngester(tmp_path, rate_limiter=RateLimiter(0.0))
+    # Simulate the 404 path (e.g. SeasonCode E2026 before the 2026-27 season starts).
+    monkeypatch.setattr(ing, "_fetch_records", lambda *a, **k: None)
+    assert ing.player_season_stats(2026) == "[]"
+    assert parse_euroleague_player_season(ing.player_season_stats(2026)).height == 0
+    # Not cached -> a later successful fetch is still picked up (no stale empty cache).
+    monkeypatch.setattr(ing, "_fetch_records", lambda *a, **k: '[{"playerName": "X"}]')
+    assert "playerName" in ing.player_season_stats(2026)
+
+
 def test_link_intl_matches_within_draft_window():
     draft = pl.DataFrame(
         {

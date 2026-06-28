@@ -54,6 +54,12 @@ class EuroLeagueIngester:
 
         self._rate.wait()
         payload = self._fetch_records(season, endpoint, statistic_mode)
+        if payload is None:
+            # Season not available yet (e.g. the upcoming EuroLeague season around a just-happened
+            # draft -> the API 404s). Return empty WITHOUT caching, so a later run can fetch it
+            # once the season exists; downstream parsing/concat tolerate an empty frame.
+            log.warning("EuroLeague season %s not available yet; treating as empty.", season)
+            return "[]"
         data = payload.encode("utf-8")
         prov = Provenance.create(
             source_id=self.source.id, url="euroleague_api://PlayerStats", data=data,
@@ -63,12 +69,20 @@ class EuroLeagueIngester:
         self.cache.put(self.source.id, key, data, prov)
         return payload
 
-    def _fetch_records(self, season: int, endpoint: str, statistic_mode: str) -> str:
+    def _fetch_records(self, season: int, endpoint: str, statistic_mode: str) -> str | None:
+        """Fetch one season's records as JSON, or ``None`` if the season isn't available (404)."""
+        import requests
         from euroleague_api.player_stats import PlayerStats
 
-        df = PlayerStats().get_player_stats_single_season(
-            endpoint=endpoint, season=season, statistic_mode=statistic_mode
-        )
+        try:
+            df = PlayerStats().get_player_stats_single_season(
+                endpoint=endpoint, season=season, statistic_mode=statistic_mode
+            )
+        except requests.exceptions.HTTPError as exc:
+            resp = exc.response
+            if resp is not None and resp.status_code == 404:
+                return None  # season not played yet -> caller treats as empty
+            raise
         # euroleague_api returns a pandas DataFrame; serialize as a list-of-records JSON.
         records: list[dict[str, Any]] = df.to_dict(orient="records")
         return json.dumps(records)

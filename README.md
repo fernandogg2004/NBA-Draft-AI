@@ -336,6 +336,20 @@ setx CBD_API_KEY "your-key"        # Windows; or export CBD_API_KEY=... in bash
 python scripts/run_real_pipeline.py
 ```
 
+The default run also **projects the current draft class (2026)** as the served board: it is pulled
+alongside the training classes but has no NBA outcomes yet, so it is auto-excluded from training/eval
+and becomes the pool that `build_service_from_master` ranks. The served model is **scouting-only**
+(`exclude_pick_feature=True`) — the draft pick is kept for display but not used as a feature — so the
+board ranking is independent of where players were actually picked, enabling an honest
+"steals & reaches" view (model rank vs. actual pick). For international coverage set
+`NBA_DRAFT_AI_INTL=1` before the run. Then serve it:
+
+```bash
+# point the API/dashboard at the rebuilt board (PowerShell: $env:NBA_DRAFT_AI_MASTER=...)
+export NBA_DRAFT_AI_MASTER="artifacts/real_pipeline/serving"
+uvicorn api.main:app --reload
+```
+
 Other entrypoints: `scripts/run_ingest.py` (raw NBA pull only), `scripts/verify_cbd.py` (verify
 the college API key + endpoints). To deploy a real-data service, point
 `service.build_demo_service` at the rebuilt master dataset.

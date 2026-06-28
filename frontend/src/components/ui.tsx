@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Icon } from "./Icon";
 
 /** Card: the tonal-mid container with a hairline border (10px radius). */
@@ -126,6 +126,62 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
         </button>
       )}
     </Card>
+  );
+}
+
+/**
+ * Player headshot with graceful fallback to the person icon (synthetic ids 404, and not every
+ * real prospect has a CDN photo). Circular, sized to fit the avatar slots.
+ */
+export function Headshot({
+  url,
+  size = 32,
+  alt = "",
+}: {
+  url?: string;
+  size?: number;
+  alt?: string;
+}) {
+  const [failed, setFailed] = useState(!url);
+  return (
+    <div
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-outline-variant bg-surface-container-highest"
+      style={{ width: size, height: size }}
+    >
+      {failed || !url ? (
+        <Icon name="person" size={Math.round(size * 0.62)} className="text-on-surface-variant" />
+      ) : (
+        <img
+          src={url}
+          alt={alt}
+          width={size}
+          height={size}
+          className="h-full w-full object-cover object-top"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Steal/Reach chip from slot_delta (draft_pick - model_rank). >0 = steal (model rates higher). */
+export function StealReachChip({ slotDelta }: { slotDelta: number }) {
+  if (slotDelta === 0) {
+    return <Chip tone="muted">on slot</Chip>;
+  }
+  const steal = slotDelta > 0;
+  return (
+    <span
+      title={`Model rank vs. actual pick: ${steal ? "+" : ""}${slotDelta}`}
+      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-label-caps text-[10px] ${
+        steal
+          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+          : "border-red-500/40 bg-red-500/10 text-red-400"
+      }`}
+    >
+      <Icon name={steal ? "trending_up" : "trending_down"} size={12} />
+      {steal ? `Steal +${slotDelta}` : `Reach ${slotDelta}`}
+    </span>
   );
 }
 

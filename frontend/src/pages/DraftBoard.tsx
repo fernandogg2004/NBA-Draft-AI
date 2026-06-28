@@ -4,7 +4,16 @@ import { api } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { tierSlices, rankingValue } from "../lib/tiers";
 import { Icon } from "../components/Icon";
-import { Card, Chip, ErrorState, Loading, Placeholder, SectionLabel } from "../components/ui";
+import {
+  Card,
+  Chip,
+  ErrorState,
+  Headshot,
+  Loading,
+  Placeholder,
+  SectionLabel,
+  StealReachChip,
+} from "../components/ui";
 import { RangeBar, TierBar } from "../components/charts";
 
 export function DraftBoard() {
@@ -20,6 +29,10 @@ export function DraftBoard() {
   }, [data]);
 
   const rankedByEv = !!data?.[0]?.projected_ev;
+  // The class being projected, taken from the served pool (latest draft year present).
+  const draftYear = data?.length
+    ? Math.max(...data.map((r) => r.draft_year ?? 0)) || null
+    : null;
 
   return (
     <>
@@ -48,7 +61,7 @@ export function DraftBoard() {
             <Icon name="insights" className="text-brand-orange" size={28} />
             <div>
               <h2 className="font-headline-sm text-[18px] font-semibold text-on-surface">
-                Algorithmic Consensus
+                {draftYear ? `${draftYear} Draft Board` : "Algorithmic Consensus"}
               </h2>
               <p className="mt-0.5 font-body-sm text-on-surface-variant">
                 {rankedByEv
@@ -84,8 +97,8 @@ export function DraftBoard() {
                       {rankedByEv ? "EV (Flr–Ceil)" : "Impact (Flr–Ceil)"}
                     </Th>
                     <Th className="hidden w-32 xl:table-cell">Outcome Dist.</Th>
-                    <Th className="text-right">Fit Score</Th>
-                    <Th className="text-right">Real Surplus</Th>
+                    <Th className="text-right">Actual Pick</Th>
+                    <Th className="text-right">Draft Result</Th>
                     <Th className="text-right">Actions</Th>
                   </tr>
                 </thead>
@@ -103,16 +116,15 @@ export function DraftBoard() {
                         </td>
                         <td className="p-3">
                           <div className="flex items-center gap-3">
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-outline-variant bg-surface-container-highest">
-                              <Icon name="person" size={20} className="text-on-surface-variant" />
-                            </div>
+                            <Headshot url={row.headshot_url} size={32} alt={row.full_name} />
                             <div>
                               <div className="font-body-sm font-semibold text-on-surface">
                                 {row.full_name}
                               </div>
                               <div className="mt-0.5 font-label-caps text-[9px] text-on-surface-variant">
                                 {[
-                                  row.draft_year ? `Class ${row.draft_year}` : null,
+                                  row.team_abbr ?? (row.draft_year ? `Class ${row.draft_year}` : null),
+                                  row.position,
                                   row.age != null ? `${row.age.toFixed(1)}y` : null,
                                 ]
                                   .filter(Boolean)
@@ -138,11 +150,15 @@ export function DraftBoard() {
                         <td className="hidden p-3 xl:table-cell">
                           <TierBar slices={slices} height={6} />
                         </td>
-                        <td className="p-3 text-right">
-                          <Placeholder label="—" />
+                        <td className="p-3 text-right font-data-tabular text-body-sm text-on-surface">
+                          {row.draft_pick != null ? `#${row.draft_pick}` : <Placeholder label="—" />}
                         </td>
                         <td className="p-3 text-right">
-                          <Placeholder label="—" />
+                          {row.slot_delta != null ? (
+                            <StealReachChip slotDelta={row.slot_delta} />
+                          ) : (
+                            <Placeholder label="—" />
+                          )}
                         </td>
                         <td className="p-3 text-right">
                           <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -176,7 +192,7 @@ export function DraftBoard() {
                 Showing 1–{data.length} of {data.length} Prospects
               </SectionLabel>
               <p className="font-label-caps text-[10px] text-on-surface-variant">
-                Fit Score &amp; Real Surplus are team-specific — open{" "}
+                Steal/Reach = model rank vs. actual pick. Team-specific fit →{" "}
                 <button
                   className="text-brand-orange hover:underline"
                   onClick={() => navigate("/team-fit")}

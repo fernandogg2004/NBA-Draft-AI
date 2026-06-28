@@ -73,21 +73,56 @@ def _scale(value: float, lo: float, hi: float) -> float:
     return float(np.clip((value - lo) / (hi - lo) * 100.0, 0.0, 100.0))
 
 
+def _feat(row: dict[str, Any], *names: str, default: float = 0.0) -> float:
+    """First present, non-null, non-NaN value among ``names`` (else ``default``).
+
+    Lets the skill mapping work across schemas: the synthetic fixture uses NBA-shaped per-100
+    columns, while the real college table uses per-40 columns (and richer defensive box stats).
+    """
+    for n in names:
+        v = row.get(n)
+        if v is not None and v == v:  # v == v is False only for NaN
+            return float(v)
+    return float(default)
+
+
 def prospect_to_player(name: str, row: dict[str, Any], impact: float) -> Player:
     """Heuristically map pre-draft features to functional skills for the fit module.
 
-    EXPLORATORY bridge: the skill mapping is a rough illustration, not a calibrated model.
-    Rim protection / perimeter defense are weakly proxied (box stats under-capture defense).
+    EXPLORATORY bridge: the skill mapping is a rough illustration, not a calibrated model. Handles
+    both the synthetic per-100 schema and the real college per-40 schema; defense uses block/steal
+    rates when available (real data) and falls back to weak proxies otherwise.
     """
+    per40 = row.get("pts_per40") is not None
+    if per40:
+        scoring = _scale(_feat(row, "pts_per40"), 5, 28)
+        playmaking = _scale(_feat(row, "ast_per40"), 0, 8)
+        rebounding = _scale(_feat(row, "reb_per40"), 1, 14)
+    else:
+        scoring = _scale(_feat(row, "pts_per100"), 2, 26)
+        playmaking = _scale(_feat(row, "ast_per100"), 0, 9)
+        rebounding = _scale(_feat(row, "reb_per100"), 1, 14)
+
+    # Rim protection: block rate if present (real college), else wingspan as a weak proxy.
+    if row.get("blk_per40") is not None:
+        rim = _scale(_feat(row, "blk_per40"), 0, 3)
+    else:
+        rim = _scale(_feat(row, "wingspan_in", default=80.0), 76, 92)
+    # Perimeter defense: steal rate if present, else a neutral prior (box stats miss defense).
+    if row.get("stl_per40") is not None:
+        perimeter = _scale(_feat(row, "stl_per40"), 0, 2.5)
+    else:
+        perimeter = 50.0
+
     return Player(
         name=name,
         skills={
-            "scoring": _scale(row.get("pts_per100", 0.0), 2, 26),
-            "shooting_spacing": _scale(row.get("true_shooting", 0.5), 0.45, 0.65),
-            "playmaking": _scale(row.get("ast_per100", 0.0), 0, 9),
-            "rebounding": _scale(row.get("reb_per100", 0.0), 1, 14),
-            "rim_protection": _scale(row.get("wingspan_in", 80.0), 76, 92),
-            "perimeter_defense": 50.0,  # not captured by box features; neutral prior
+            "scoring": scoring,
+            "shooting_spacing": _scale(_feat(row, "true_shooting", default=0.5), 0.45, 0.65),
+            "playmaking": playmaking,
+            "rebounding": rebounding,
+            "rim_protection": rim,
+            "perimeter_defense": perimeter,
         },
         impact=impact,
     )
@@ -178,26 +213,35 @@ class DraftBoardService:
                 "archetype": archetype_from_skills(player.skills),
                 **{f"skill_{k}": round(v, 1) for k, v in player.skills.items()},
             }
-            if r.get("age") is not None:
-                entry["age"] = round(float(r["age"]), 1)
+            # age: real table uses age_at_draft; synthetic uses age.
+            age = _feat(r, "age_at_draft", "age", default=float("nan"))
+            if age == age:  # not NaN
+                entry["age"] = round(age, 1)
             if r.get("wingspan_in") is not None:
                 entry["wingspan_in"] = round(float(r["wingspan_in"]), 1)
+            # Post-draft display metadata (present only on the real table) passed straight through.
+            for col in ("draft_pick", "team_abbr", "team_name", "position"):
+                if r.get(col) is not None:
+                    entry[col] = r[col]
             rows.append(entry)
         return pl.DataFrame(rows)
 
     def ranked_with_profile(
         self, prospects: pl.DataFrame, *, cba: CBAConfig | None = None
     ) -> pl.DataFrame:
-        """Ranked board joined with the feature-derived profile + two projection-derived fields.
+        """Ranked board joined with the feature-derived profile + projection/post-draft fields.
 
         Adds ``peak_pctile`` (percentile rank of the ranking metric within the pool; higher is
-        better) and ``projected_value_usd`` (team-independent $ value over the rookie window from
-        the projected impact). Powers the Draft Board / Prospect Detail / Comparison screens.
+        better), ``projected_value_usd`` (team-independent $ value over the rookie window), a
+        1-based ``model_rank``, and — when the actual ``draft_pick`` is known (post-draft real
+        data) — ``slot_delta = draft_pick - model_rank`` (positive ⇒ the model rates the player
+        higher than the league did = a "steal"). A ``headshot_url`` is built from the NBA player id
+        (the frontend falls back to an icon if it 404s, e.g. for synthetic ids).
         """
         cba = cba or load_cba()
-        board = self.rank(prospects)
+        board = self.rank(prospects)  # already sorted best-first
         rank_col = "projected_ev" if "projected_ev" in board.columns else "projected_impact"
-        board = board.with_columns(
+        board = board.with_row_index("model_rank", offset=1).with_columns(
             (pl.col(rank_col).rank() / pl.len()).round(4).alias("peak_pctile"),
             pl.col("projected_impact")
             .map_elements(
@@ -205,9 +249,20 @@ class DraftBoardService:
                 return_dtype=pl.Float64,
             )
             .alias("projected_value_usd"),
+            pl.col("model_rank").cast(pl.Int64),
         )
         if self.name_col in board.columns:
-            return board.join(self.profile_table(prospects), on=self.name_col, how="left")
+            board = board.join(self.profile_table(prospects), on=self.name_col, how="left")
+            board = board.with_columns(
+                pl.format(
+                    "https://cdn.nba.com/headshots/nba/latest/1040x760/{}.png",
+                    pl.col(self.name_col),
+                ).alias("headshot_url")
+            )
+            if "draft_pick" in board.columns:
+                board = board.with_columns(
+                    (pl.col("draft_pick") - pl.col("model_rank")).alias("slot_delta")
+                )
         return board
 
     def explain(self, prospect_row: pl.DataFrame) -> tuple[pl.DataFrame, float]:

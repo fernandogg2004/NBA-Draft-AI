@@ -6,7 +6,7 @@ import { pct, signed, usdM } from "../lib/format";
 import { rankingValue, tierSlices } from "../lib/tiers";
 import { prospectSkills, SKILL_DIMS, type ProspectRow } from "../lib/types";
 import { Icon } from "../components/Icon";
-import { Card, Chip, ErrorState, Loading, Placeholder, SectionLabel } from "../components/ui";
+import { Card, Chip, ErrorState, Headshot, Loading, SectionLabel } from "../components/ui";
 import { SkillRadar, TierBar } from "../components/charts";
 import { ProspectSelect } from "../components/ProspectSelect";
 
@@ -85,15 +85,21 @@ export function Comparison() {
           { row: rowA, which: "a" as const },
           { row: rowB, which: "b" as const },
         ].map(({ row, which }) => (
-          <div key={which} className="bg-surface-container p-4 text-center">
-            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full border border-outline-variant bg-surface-container-highest">
-              <Icon name="person" size={28} className="text-on-surface-variant" />
+          <div key={which} className="flex flex-col items-center bg-surface-container p-4 text-center">
+            <div className="mb-2">
+              <Headshot url={row.headshot_url} size={48} alt={row.full_name} />
             </div>
             <ProspectSelect
               prospects={rows}
               value={row.player_id}
               onChange={(id) => setSel(which, id)}
             />
+            {(row.team_abbr || row.draft_pick != null) && (
+              <p className="mt-1 font-label-caps text-[10px] text-on-surface-variant">
+                {row.draft_pick != null ? `#${row.draft_pick}` : ""}
+                {row.team_abbr ? ` · ${row.team_abbr}` : ""}
+              </p>
+            )}
             {row.player_id === winner.player_id && (
               <Chip tone="primary" className="mt-2">
                 Projected Leader
@@ -137,9 +143,9 @@ export function Comparison() {
           b={rowB.archetype ?? "—"}
         />
         <MetricRow
-          label="System Fit Score"
-          a={<Placeholder label="open Team Fit" />}
-          b={<Placeholder label="open Team Fit" />}
+          label="Actual Pick (model rank)"
+          a={rowA.draft_pick != null ? `#${rowA.draft_pick} (#${rowA.model_rank})` : "—"}
+          b={rowB.draft_pick != null ? `#${rowB.draft_pick} (#${rowB.model_rank})` : "—"}
         />
 
         {/* Outcome distributions */}

@@ -15,12 +15,16 @@ in Python.
 | `/team-fit` | Team Fit & Simulator | `POST /fit` |
 | `/compare` | Comparison | `GET /prospects` |
 
-Real model output now backs the SHAP attribution, the **counterfactual** ("what would lift this
-prospect to the next tier"), the **synergy sub-scores** (functional need / net / overlap), the
-**lineup Net-Rating** before→after, the **skill radar** + **archetype** (feature-derived), **age**,
-**wingspan**, **peak percentile** ("Top X%"), and **projected career value $**. The only remaining
-placeholders are fields genuinely absent from the served pool: standing/max vertical, lane agility,
-position, and player photos — each shown as a labeled "not measured".
+Real model output backs the SHAP attribution, the **counterfactual**, the **synergy sub-scores**,
+the **lineup Net-Rating** before→after, the **skill radar** + **archetype** (feature-derived),
+**age**, **wingspan**, **peak percentile**, and **projected career value $**.
+
+With a real serving artifact (`NBA_DRAFT_AI_MASTER`, see the root README), the board shows the
+**2026 class post-draft**: real **photos**, **drafting team**, **position**, **combine
+measurements**, the **actual pick**, and a **steal/reach** chip (model rank vs. where the player was
+actually drafted). On the synthetic demo these real-only fields fall back to icons / "not measured".
+A ribbon reminds users the board is **pre-draft projections** (no 2026 outcomes yet) and the skill
+mapping is exploratory.
 
 ## Run it
 

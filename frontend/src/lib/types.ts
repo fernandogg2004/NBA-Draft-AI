@@ -47,6 +47,19 @@ export interface ProspectRow {
   wingspan_in?: number;
   peak_pctile?: number; // 0..1, higher is better
   projected_value_usd?: number;
+  // Projection / post-draft fields.
+  model_rank?: number; // 1-based board rank
+  draft_pick?: number; // actual overall pick (post-draft real data)
+  slot_delta?: number; // draft_pick - model_rank; >0 = model rates higher than league (steal)
+  team_abbr?: string;
+  team_name?: string;
+  position?: string;
+  headshot_url?: string;
+  // Combine measurements (real data; null = not measured).
+  standing_reach_in?: number;
+  max_vertical_in?: number;
+  lane_agility_s?: number;
+  body_fat_pct?: number;
   skill_scoring?: number;
   skill_shooting_spacing?: number;
   skill_playmaking?: number;
