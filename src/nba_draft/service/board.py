@@ -22,13 +22,17 @@ from nba_draft.fit.score import FitResult
 from nba_draft.fit.types import SKILL_DIMS
 from nba_draft.interpretability import ShapExplainer, greedy_counterfactual
 from nba_draft.models.hurdle import REPLACEMENT_BPM, HurdleModel
+from nba_draft.models.tier import TierProbabilityModel
 from nba_draft.models.zoo import logistic_classifier, ridge_regressor
-from nba_draft.uncertainty import BootstrapEnsemble
+from nba_draft.uncertainty import BootstrapEnsemble, SplitConformalRegressor
 from nba_draft.validation import FoldPreprocessor, make_data_split
 
 # Outcome-tier bands on the impact scale (BPM-like); align with config/targets in production.
 TIER_EDGES: list[float] = [-1e9, -2.0, 0.0, 3.0, 6.0, 1e9]
 TIER_LABELS: list[str] = ["bust", "rotation", "starter", "all_star", "superstar"]
+
+# Default miss rate for prediction intervals (0.2 -> 80% floor/ceiling).
+DEFAULT_INTERVAL_ALPHA: float = 0.2
 
 
 def _tier_for(value: float) -> str:
@@ -157,8 +161,10 @@ class DraftBoardService:
     feature_cols: list[str]
     background: np.ndarray
     name_col: str = "player_id"
-    interval_alpha: float = 0.2
+    interval_alpha: float = DEFAULT_INTERVAL_ALPHA
     hurdle: Any | None = None      # optional HurdleModel -> survivorship-robust EV ranking
+    conformal: Any | None = None   # optional SplitConformalRegressor -> calibrated floor/ceiling
+    tier_model: Any | None = None  # optional TierProbabilityModel -> honors-aware tier probs
     _shap: ShapExplainer | None = None
 
     def _matrix(self, prospects: pl.DataFrame) -> np.ndarray:
@@ -172,8 +178,21 @@ class DraftBoardService:
         """
         x = self._matrix(prospects)
         point = np.asarray(self.impact_model.predict(x), dtype=float)
-        lo, hi = self.ensemble.predict_interval(x, alpha=self.interval_alpha)
-        scenarios = self.ensemble.predict_scenarios(x, TIER_EDGES, TIER_LABELS)
+        # Floor/ceiling: prefer the conformal interval (finite-sample marginal coverage ≈ nominal)
+        # when fit; fall back to the bootstrap ensemble (adaptive but historically overconfident).
+        # Floor/ceiling: prefer the conformal layer (calibrated coverage) over the ensemble.
+        if self.conformal is not None:
+            lo, hi = self.conformal.predict_interval(x)
+        else:
+            lo, hi = self.ensemble.predict_interval(x, alpha=self.interval_alpha)
+        # Tier probabilities: prefer the honors-aware tier classifier (calibrated to the real
+        # outcome-tier definition); else the conformal residual spread; else the ensemble.
+        if self.tier_model is not None:
+            scenarios = self.tier_model.predict_scenarios(x)
+        elif self.conformal is not None:
+            scenarios = self.conformal.predict_scenarios(x, TIER_EDGES, TIER_LABELS)
+        else:
+            scenarios = self.ensemble.predict_scenarios(x, TIER_EDGES, TIER_LABELS)
 
         out = prospects.select(
             [c for c in (self.name_col, "full_name", "draft_year") if c in prospects.columns]
@@ -381,6 +400,9 @@ def build_demo_service(seed: int = 42) -> tuple[DraftBoardService, pl.DataFrame]
     hurdle = HurdleModel(
         reach_factory=logistic_classifier, impact_factory=lambda: ridge_regressor(1.0),
     ).fit(x_tr, reached, y_tr)
+    conformal = SplitConformalRegressor(
+        lambda: ridge_regressor(1.0), alpha=DEFAULT_INTERVAL_ALPHA, seed=seed
+    ).fit(x_tr, y_tr)
 
     service = DraftBoardService(
         preprocessor=pp,
@@ -390,6 +412,7 @@ def build_demo_service(seed: int = 42) -> tuple[DraftBoardService, pl.DataFrame]
         background=x_tr,
         name_col="player_id",
         hurdle=hurdle,
+        conformal=conformal,
     )
     # Give the pool friendly names for display.
     pool = split.holdout.with_columns(
@@ -404,6 +427,7 @@ def build_service_from_table(
     *,
     target_col: str = "peak_impact",
     reached_col: str = "reached",
+    tier_col: str = "outcome_tier",
     seed: int = 42,
 ) -> DraftBoardService:
     """Build a DraftBoardService trained on a REAL modeling table (not the synthetic fixture).
@@ -432,6 +456,13 @@ def build_service_from_table(
     impact_model.fit(x_reached, y_reached)
     ensemble = BootstrapEnsemble(lambda: ridge_regressor(1.0), n_estimators=30, seed=seed)
     ensemble.fit(x_reached, y_reached)
+    # Calibrated floor/ceiling: split-conformal on the reached impacts gives ≈ nominal coverage
+    # (the bootstrap interval was badly overconfident). Needs enough rows for a calibration split.
+    conformal = None
+    if x_reached.shape[0] >= 20:
+        conformal = SplitConformalRegressor(
+            lambda: ridge_regressor(1.0), alpha=DEFAULT_INTERVAL_ALPHA, seed=seed
+        ).fit(x_reached, y_reached)
 
     hurdle = None
     if has_reach:
@@ -444,6 +475,19 @@ def build_service_from_table(
                 reach_factory=logistic_classifier, impact_factory=lambda: ridge_regressor(1.0),
             ).fit(x_all, reach_arr, impact_all)
 
+    # Honors-aware tier probabilities: a multiclass classifier trained on the real ``outcome_tier``
+    # (which incorporates All-Star/All-NBA honors) is far better calibrated to the true tier
+    # definition than mapping one predicted BPM through fixed bands. Needs the label + ≥2 tiers.
+    tier_model = None
+    if tier_col in train_table.columns:
+        labelled = train_table.filter(pl.col(tier_col).is_not_null())
+        tier_idx = {t: i for i, t in enumerate(TIER_LABELS)}
+        present = [t for t in labelled[tier_col].unique().to_list() if t in tier_idx]
+        if labelled.height >= 20 and len(present) >= 2:
+            x_tier = pp.transform_matrix(labelled).to_numpy()
+            y_tier = np.array([tier_idx[t] for t in labelled[tier_col].to_list()], dtype=np.int64)
+            tier_model = TierProbabilityModel.fit(x_tier, y_tier, TIER_LABELS, seed=seed)
+
     return DraftBoardService(
         preprocessor=pp,
         impact_model=impact_model,
@@ -452,6 +496,8 @@ def build_service_from_table(
         background=x_reached,
         name_col="player_id",
         hurdle=hurdle,
+        conformal=conformal,
+        tier_model=tier_model,
     )
 
 

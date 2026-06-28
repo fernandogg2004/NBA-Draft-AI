@@ -32,9 +32,30 @@ def test_rank_returns_projection_interval_and_scenarios(service_and_pool):
     assert ((board["p_reach"] >= 0.0) & (board["p_reach"] <= 1.0)).all()
     # floor <= ceiling for every prospect
     assert (board["floor"] <= board["ceiling"]).all()
-    # scenario probabilities sum to ~1 per prospect
+    # scenario probabilities sum to ~1 per prospect (tolerance covers 4-decimal display rounding
+    # across the 5 tiers; they sum to exactly 1 before rounding).
     probs = board.select([f"p_{t}" for t in TIER_LABELS]).to_numpy().sum(axis=1)
-    assert all(abs(p - 1.0) < 1e-6 for p in probs)
+    assert all(abs(p - 1.0) < 1e-3 for p in probs)
+
+
+def test_conformal_interval_is_attached_and_calibrated(service_and_pool):
+    """Floor/ceiling come from the split-conformal layer (finite-sample marginal coverage),
+    not the historically-overconfident bootstrap. Its signature is a constant-width interval."""
+    import numpy as np
+
+    service, pool = service_and_pool
+    assert service.conformal is not None
+    board = service.rank(pool)
+    floor = board["floor"].to_numpy()
+    ceiling = board["ceiling"].to_numpy()
+    point = board["projected_impact"].to_numpy()
+    # point estimate lies inside the interval...
+    assert bool(np.all((point >= floor - 1e-6) & (point <= ceiling + 1e-6)))
+    # ...and the width is constant (= 2*qhat), the distinguishing mark of conformal vs ensemble
+    # (tolerance covers the 3-decimal rounding applied to floor/ceiling in rank()).
+    widths = ceiling - floor
+    assert float(widths.max() - widths.min()) < 1e-2
+    assert float(widths.mean()) > 0.0
 
 
 def test_explain_is_additive(service_and_pool):
@@ -140,6 +161,58 @@ def test_ranked_with_profile_real_shaped_pool():
         assert r["headshot_url"].endswith(f"{r['player_id']}.png")
 
 
+def test_tier_probability_model_aligns_labels_and_sums_to_one():
+    import numpy as np
+
+    from nba_draft.models.tier import TierProbabilityModel
+
+    rng = np.random.default_rng(0)
+    n = 200
+    x = rng.normal(size=(n, 3))
+    # 3 of 5 tiers present in training (superstar/all_star absent) -> must still align to 5 labels.
+    y = (x[:, 0] > 0).astype(np.int64) + (x[:, 0] > 1).astype(np.int64)  # classes {0,1,2}
+    labels = ["bust", "rotation", "starter", "all_star", "superstar"]
+    model = TierProbabilityModel.fit(x, y, labels)
+    scen = model.predict_scenarios(x[:5])
+    for s in scen:
+        assert set(s) == set(labels)
+        assert abs(sum(s.values()) - 1.0) < 1e-3
+        assert s["all_star"] == 0.0 and s["superstar"] == 0.0  # unseen tiers -> 0
+
+
+def test_service_uses_honors_aware_tier_model_when_outcome_tier_present():
+    import numpy as np
+    import polars as pl
+
+    from nba_draft.service import build_service_from_table
+    from nba_draft.service.board import TIER_LABELS
+
+    rng = np.random.default_rng(1)
+    n = 120
+    skill = rng.normal(size=n)
+    peak = [float(2 * skill[i]) if skill[i] > -0.3 else None for i in range(n)]
+    tier = [
+        "superstar" if s > 1.5 else "all_star" if s > 1 else "starter" if s > 0
+        else "rotation" if s > -0.5 else "bust"
+        for s in skill
+    ]
+    table = pl.DataFrame(
+        {
+            "player_id": list(range(n)),
+            "full_name": [f"P{i}" for i in range(n)],
+            "draft_year": [2010 + (i % 6) for i in range(n)],
+            "f_skill": skill + rng.normal(scale=0.2, size=n),
+            "reached": [bool(s > -0.3) for s in skill],
+            "outcome_tier": tier,
+        }
+    ).with_columns(pl.Series("peak_impact", peak, dtype=pl.Float64))
+    svc = build_service_from_table(table, ["f_skill"])
+    assert svc.tier_model is not None
+    board = svc.rank(table)
+    P = board.select([f"p_{t}" for t in TIER_LABELS]).to_numpy()
+    assert np.all(np.abs(P.sum(axis=1) - 1.0) < 1e-2)
+
+
 def test_counterfactual_lifts_a_low_prospect_toward_next_tier(service_and_pool):
     import polars as pl
 
@@ -190,6 +263,15 @@ def test_health(client):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+
+
+def test_meta_reports_real_serving_metadata(client):
+    # The default test app serves the synthetic demo (no NBA_DRAFT_AI_MASTER set).
+    r = client.get("/meta")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mode"] in {"demo", "real"}
+    assert body["n_prospects"] > 0  # real count from the served pool, not a fabricated string
 
 
 def test_prospects_endpoint_returns_ranked_board(client):

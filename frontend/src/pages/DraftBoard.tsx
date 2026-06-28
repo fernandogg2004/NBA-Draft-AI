@@ -19,6 +19,7 @@ import { RangeBar, TierBar } from "../components/charts";
 export function DraftBoard() {
   const navigate = useNavigate();
   const { data, loading, error, reload } = useAsync(() => api.prospects(60), []);
+  const { data: meta } = useAsync(() => api.meta(), []);
 
   // Shared domain for the floor/ceiling range bars so rows are comparable.
   const domain = useMemo(() => {
@@ -71,7 +72,11 @@ export function DraftBoard() {
             </div>
           </div>
           <Chip tone="primary" className="hidden sm:inline-block">
-            Model V2.4 Active
+            {meta
+              ? meta.mode === "real"
+                ? `Model ${meta.model_version ?? "real"} · ${meta.n_features ?? "?"} feats`
+                : "Synthetic demo"
+              : "…"}
           </Chip>
         </Card>
       </div>
@@ -192,7 +197,8 @@ export function DraftBoard() {
                 Showing 1–{data.length} of {data.length} Prospects
               </SectionLabel>
               <p className="font-label-caps text-[10px] text-on-surface-variant">
-                Steal/Reach = model rank vs. actual pick. Team-specific fit →{" "}
+                Steal/Reach = model rank vs. actual pick (exploratory — the model matches, not beats,
+                the draft consensus on backtests). Team-specific fit →{" "}
                 <button
                   className="text-brand-orange hover:underline"
                   onClick={() => navigate("/team-fit")}

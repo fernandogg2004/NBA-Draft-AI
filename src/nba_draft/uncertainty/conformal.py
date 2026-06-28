@@ -33,6 +33,7 @@ class SplitConformalRegressor:
         self.seed = seed
         self._base: Any | None = None
         self._qhat: float | None = None
+        self._residuals: NDArray[np.float64] | None = None  # signed calibration residuals
 
     def fit(self, X: NDArray[np.float64], y: NDArray[np.float64]) -> SplitConformalRegressor:
         rng = np.random.default_rng(self.seed)
@@ -45,7 +46,9 @@ class SplitConformalRegressor:
 
         self._base = self.base_factory()
         self._base.fit(X[train_idx], y[train_idx])
-        residuals = np.abs(y[calib_idx] - self._base.predict(X[calib_idx]))
+        signed = np.asarray(y[calib_idx] - self._base.predict(X[calib_idx]), dtype=np.float64)
+        self._residuals = signed  # signed residuals -> empirical predictive distribution
+        residuals = np.abs(signed)
         # Conformal quantile level with finite-sample correction.
         level = min(1.0, np.ceil((n_calib + 1) * (1 - self.alpha)) / n_calib)
         self._qhat = float(np.quantile(residuals, level, method="higher"))
@@ -63,3 +66,22 @@ class SplitConformalRegressor:
             raise RuntimeError("SplitConformalRegressor must be fit before predict_interval.")
         point = self.predict(X)
         return point - self._qhat, point + self._qhat
+
+    def predict_scenarios(
+        self, X: NDArray[np.float64], edges: list[float], labels: list[str]
+    ) -> list[dict[str, float]]:
+        """Per-row outcome-tier probabilities from the empirical predictive distribution.
+
+        Each prediction is spread by the *calibration residual* distribution (point + signed
+        residuals), so the tier probabilities inherit the conformal model's honest predictive
+        variance instead of an overconfident parametric/ensemble spread.
+        """
+        from nba_draft.uncertainty.scenarios import scenario_probabilities_from_samples
+
+        if self._residuals is None:
+            raise RuntimeError("SplitConformalRegressor must be fit before predict_scenarios.")
+        point = self.predict(X)
+        return [
+            scenario_probabilities_from_samples(point[i] + self._residuals, edges, labels)
+            for i in range(point.shape[0])
+        ]

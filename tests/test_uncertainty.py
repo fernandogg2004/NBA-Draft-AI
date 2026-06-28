@@ -80,6 +80,24 @@ def test_conformal_interval_achieves_nominal_coverage():
     assert cov >= 0.83  # ~0.90 nominal, allow sampling slack
 
 
+def test_conformal_scenarios_are_valid_distribution_from_residuals():
+    # Tier probabilities come from the empirical residual spread; they form a proper distribution
+    # and are not degenerate (mass across >1 tier when residuals straddle a band edge).
+    x, y = _linear_data(n=400, noise=2.0, seed=3)
+    model = SplitConformalRegressor(lambda: ridge_regressor(1.0), alpha=0.2, seed=3).fit(
+        x[:300], y[:300]
+    )
+    edges = [-1e9, -1.0, 0.0, 1.0, 1e9]
+    labels = ["d", "c", "b", "a"]
+    scen = model.predict_scenarios(x[300:], edges, labels)
+    assert len(scen) == x[300:].shape[0]
+    for s in scen:
+        assert abs(sum(s.values()) - 1.0) < 1e-3      # proper distribution (4-decimal rounding)
+        assert set(s) == set(labels)
+    # at least one prospect has spread mass over multiple tiers (honest, not over-peaked)
+    assert any(sum(v > 0.01 for v in s.values()) >= 2 for s in scen)
+
+
 # ----------------------------------------------------------------- bayesian
 def test_bayesian_predicts_mean_and_positive_std():
     x, y = _linear_data()

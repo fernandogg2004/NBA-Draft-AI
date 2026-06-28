@@ -101,9 +101,26 @@ class NbaStatsIngester:
         def produce() -> str:
             from nba_api.stats.endpoints import commonplayerinfo
 
-            return _endpoint_json(commonplayerinfo.CommonPlayerInfo(player_id=player_id))
+            return _safe_endpoint_json(
+                lambda: commonplayerinfo.CommonPlayerInfo(player_id=player_id),
+                what="CommonPlayerInfo", key=player_id,
+            )
 
         return self._cached_json("nba_api://CommonPlayerInfo", params, produce)
+
+    def player_awards(self, player_id: int) -> str:
+        """PlayerAwards for one player (All-Star / All-NBA selections etc.). One call per player."""
+        params = {"player_id": str(player_id)}
+
+        def produce() -> str:
+            from nba_api.stats.endpoints import playerawards
+
+            return _safe_endpoint_json(
+                lambda: playerawards.PlayerAwards(player_id=player_id),
+                what="PlayerAwards", key=player_id,
+            )
+
+        return self._cached_json("nba_api://PlayerAwards", params, produce)
 
     def player_season_stats(self, season: str, measure_type: str = "Base") -> str:
         params = {"season": season, "measure_type": measure_type}
@@ -123,3 +140,22 @@ class NbaStatsIngester:
 def _endpoint_json(endpoint: Any) -> str:
     """Extract the raw JSON string from an nba_api endpoint object."""
     return str(endpoint.get_json())
+
+
+# A valid-but-empty resultSets payload. Used as a deterministic fallback for per-player endpoints
+# that nba_api fails to parse for a minority of players (a recurring 'resultSet' KeyError): caching
+# this empty payload yields null fields (age/honors -> imputed/zero) and stops re-fetching forever.
+_EMPTY_RESULTS_JSON = '{"resultSets": [{"headers": [], "rowSet": []}]}'
+
+
+def _safe_endpoint_json(make: Any, *, what: str, key: object) -> str:
+    """Call an nba_api endpoint factory, returning an empty payload (logged) if it raises.
+
+    The fallback is cached by the caller, so a structurally-unparseable player is handled once
+    rather than retried every run. Clear the cache entry to retry after an nba_api/network fix.
+    """
+    try:
+        return _endpoint_json(make())
+    except Exception as exc:  # noqa: BLE001 - tolerate nba_api parse/transport quirks per player
+        log.warning("%s unavailable for %s: %s", what, key, exc)
+        return _EMPTY_RESULTS_JSON

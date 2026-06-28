@@ -26,10 +26,13 @@ log = get_logger("run_real_pipeline")
 # (build_service_from_master holds out the latest draft_year). Adding it only pulls that class's
 # endpoints; 2011-2020 stay cache hits. 2026 isn't on stats.nba.com yet, so the latest real draft is
 # 2025 — set PROJECT_DRAFT_YEAR to whatever the newest available class is.
-TRAIN_DRAFT_YEARS = list(range(2011, 2021))
+# Widened to 16 training classes (2005-2020) to enlarge the sample — the single biggest lever on
+# the model's ceiling (more folds, better marginal-signal estimate). Outcome seasons cover every
+# class's 4-year window (through 2023-24). PLUS the most-recent class to PROJECT (2025).
+TRAIN_DRAFT_YEARS = list(range(2005, 2021))
 PROJECT_DRAFT_YEAR = 2025
 DRAFT_YEARS = [*TRAIN_DRAFT_YEARS, PROJECT_DRAFT_YEAR]
-OUTCOME_SEASONS = [f"{y}-{str(y + 1)[-2:]}" for y in range(2011, 2024)]
+OUTCOME_SEASONS = [f"{y}-{str(y + 1)[-2:]}" for y in range(2005, 2024)]
 
 
 def main() -> None:
@@ -46,19 +49,24 @@ def main() -> None:
         ing, draft_years=DRAFT_YEARS, outcome_seasons=OUTCOME_SEASONS,
         cbd_ingester=cbd, intl_ingester=intl, min_train_years=4, n_holdout_years=2,
         tune=True, n_trials=30,
-        # Scouting-only board: keep draft_pick OUT of the model features so the served ranking is
-        # independent of where players were actually picked -> honest "steals & reaches". The pick
-        # is still kept as a column for display + the draft-position baseline comparison.
-        exclude_pick_feature=True,
+        # Consensus-anchored board: the draft pick IS legitimate pre-draft information (the 30-team
+        # consensus, known before any outcome). A pick-free model ranks WORSE than the draft order
+        # (holdout Spearman ~0.26 vs ~0.52) — misleading as a board. Including the pick makes the
+        # served ranking MATCH the baseline (~0.50) while the EV still reorders enough to surface
+        # model-vs-consensus disagreements (steals/reaches), which are exploratory, not validated to
+        # beat the room. See IMPROVEMENT_LOG.md (I2) for the measured ceiling.
+        exclude_pick_feature=False,
     )
     log.info(
         "drafted=%d  resolved=%d  model=%s  holdout=%s",
         result.n_drafted, result.n_resolved, result.model_version, result.holdout_years,
     )
     log.info("Survivorship-robust HURDLE ranking (target = realized value over ALL prospects):")
-    log.info("  hurdle    CV spearman      = %.3f", result.hurdle_cv_spearman)
-    log.info("  hurdle    HOLDOUT spearman = %.3f  (headline)", result.hurdle_holdout_spearman)
-    log.info("  baseline  HOLDOUT spearman = %.3f", result.baseline_holdout_spearman)
+    log.info("  hurdle    CV spearman       = %.3f", result.hurdle_cv_spearman)
+    log.info("  SERVED    HOLDOUT spearman  = %.3f  (headline — matches the API/dashboard)",
+             result.served_holdout_spearman)
+    log.info("  gbm-eval  HOLDOUT spearman  = %.3f  (context)", result.hurdle_holdout_spearman)
+    log.info("  baseline  HOLDOUT spearman  = %.3f", result.baseline_holdout_spearman)
     log.info("summary -> %s", result.summary_path)
 
 
