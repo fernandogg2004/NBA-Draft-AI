@@ -73,15 +73,23 @@ stats.nba.com; 2026 is not yet published). See `IMPROVEMENT_LOG.md` for the per-
 - Eval headline uses a GBM hurdle while the served model is a ridge hurdle (~similar); could align.
 - Real-data pull is **gated** to a residential IP + `CBD_API_KEY` (stats.nba.com blocks datacenters).
 
-## Recommended next steps (need more data / compute / human input)
-1. **A genuinely orthogonal pre-draft source** — recruiting rankings (247/RSCI), player-tracking, or
-   scouting grades. This is now the *only* demonstrated path past the ceiling: more rows of the same
-   public features did not beat consensus (proven above), so the missing signal must be new in kind.
-2. **Honors-aware tier model** — now that real All-Star/All-NBA labels are ingested (26 all-star /
-   60 superstar tiers across 2005–2025), train/calibrate the board's tier probabilities against the
-   honors-aware `outcome_tier` instead of pure BPM bands.
-3. **Align eval and served model** (GBM-eval vs ridge-served), and optionally tune the served path.
-4. **Harden age acquisition** (the `'resultSet'` failures) on a networked machine.
+## Recommended next steps — status
+
+1. **Orthogonal pre-draft source** — TESTED, NEGATIVE. CBD recruiting rankings (247-style composite)
+   were pulled and linked (461/1019 picks) but add **no** marginal signal over the draft consensus
+   (dev-CV 0.583→0.556, holdout flat; baseline 0.516). Even a different scouting consensus doesn't
+   beat the draft. A truly *in-kind* new source (player tracking, biometrics, scouting grades) is the
+   remaining theoretical lever — **not freely available** → genuinely gated on a data partnership.
+2. **Honors-aware tier model** — DONE. Tier probabilities now from a classifier trained on the real
+   honors-aware `outcome_tier`: multiclass ECE **0.390 → 0.111**, accuracy 0.287 → 0.548.
+3. **Align eval & served model** — DONE. The pipeline now reports `served_holdout_spearman` (the
+   ridge hurdle that's actually served, 0.469) as the headline; GBM head kept as context.
+4. **Harden per-player acquisition** — DONE. The deterministic `'resultSet'` failures now cache an
+   empty payload (null age/zero honors, imputed) instead of being retried every run.
+
+**Net:** of the 4, three were genuine wins (2–4) and one was an honest negative (1) that *reinforces*
+the structural-ceiling finding. The ranking ceiling stands; the remaining lever needs a new *kind* of
+data, which requires your decision (licensing/partnership).
 
 ## Update log
 - **Eras + honors (post-exit, user-directed):** sample 594 → 954 (classes 2005–2020); CV
