@@ -21,12 +21,13 @@ from nba_draft.utils.logging import get_logger
 log = get_logger("run_real_pipeline")
 
 # Training window: 10 draft classes (2011-2020), whose 4-year debut windows all resolve from the
-# outcome seasons below (through 2023-24). PLUS the current class to PROJECT (2026): it has no NBA
-# outcomes yet, so it is auto-excluded from training/eval and becomes the served board's pool
-# (build_service_from_master holds out the latest draft_year). Adding 2026 only pulls the new 2026
-# endpoints; 2011-2020 stay cache hits. No new outcome seasons are needed to project 2026.
+# outcome seasons below (through 2023-24). PLUS the most-recent class to PROJECT: it has no resolved
+# NBA outcomes yet, so it is auto-excluded from training/eval and becomes the served board's pool
+# (build_service_from_master holds out the latest draft_year). Adding it only pulls that class's
+# endpoints; 2011-2020 stay cache hits. 2026 isn't on stats.nba.com yet, so the latest real draft is
+# 2025 — set PROJECT_DRAFT_YEAR to whatever the newest available class is.
 TRAIN_DRAFT_YEARS = list(range(2011, 2021))
-PROJECT_DRAFT_YEAR = 2026
+PROJECT_DRAFT_YEAR = 2025
 DRAFT_YEARS = [*TRAIN_DRAFT_YEARS, PROJECT_DRAFT_YEAR]
 OUTCOME_SEASONS = [f"{y}-{str(y + 1)[-2:]}" for y in range(2011, 2024)]
 

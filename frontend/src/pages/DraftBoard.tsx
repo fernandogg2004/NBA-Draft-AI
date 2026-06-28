@@ -29,6 +29,10 @@ export function DraftBoard() {
   }, [data]);
 
   const rankedByEv = !!data?.[0]?.projected_ev;
+  // The class being projected, taken from the served pool (latest draft year present).
+  const draftYear = data?.length
+    ? Math.max(...data.map((r) => r.draft_year ?? 0)) || null
+    : null;
 
   return (
     <>
@@ -57,7 +61,7 @@ export function DraftBoard() {
             <Icon name="insights" className="text-brand-orange" size={28} />
             <div>
               <h2 className="font-headline-sm text-[18px] font-semibold text-on-surface">
-                Algorithmic Consensus
+                {draftYear ? `${draftYear} Draft Board` : "Algorithmic Consensus"}
               </h2>
               <p className="mt-0.5 font-body-sm text-on-surface-variant">
                 {rankedByEv

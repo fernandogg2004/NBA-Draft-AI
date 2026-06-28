@@ -143,8 +143,8 @@ export function AppLayout() {
         <div className="flex items-center gap-2 border-b border-outline-variant bg-surface-container-lowest px-container-padding py-1.5">
           <Icon name="info" size={14} className="text-brand-orange" />
           <p className="font-label-caps text-[10px] text-on-surface-variant">
-            2026 class · pre-draft projections — NBA outcomes not yet observed · skill mapping is
-            exploratory
+            Latest draft class · pre-draft projections — NBA outcomes not yet observed · skill
+            mapping is exploratory
           </p>
         </div>
         <main className="relative flex flex-1 flex-col gap-card-gap overflow-y-auto bg-background p-container-padding">
