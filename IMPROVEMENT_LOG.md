@@ -56,9 +56,8 @@ real_run_summary.json`) is cited where it differs.
 
 ## Prioritized backlog (impact × feasibility; attack weakest first)
 
-- [ ] **I1 — Honest intervals (conformal coverage).** Replace/raise the overconfident bootstrap
-  intervals with split-conformal calibration (repo already has `uncertainty/conformal.py`) so 80%
-  coverage ≈ nominal on the holdout. *High impact, high feasibility.*
+- [x] **I1 — Honest intervals (conformal coverage).** DONE (coverage 0.346 → 0.808). Split-conformal
+  floor/ceiling in the service.
 - [ ] **I2 — Beat the baseline.** The served board must rank ≥ the draft-position baseline. Try:
   serve the consensus-aware EV (include `draft_pick`) as the primary ranking; blend model + consensus
   (rank averaging); regularize/tune to stop the GBM adding noise over pick. Keep a separate pick-free
@@ -75,7 +74,25 @@ real_run_summary.json`) is cited where it differs.
 
 ## Iteration log
 
-### Iteration 0 — scoreboard + lock (this entry)
+### Iteration 0 — scoreboard + lock
 - Read project incl. frontend; ran real pipeline on cached data (drafted=659, resolved=594).
 - Locked holdout = 2019+2020; recorded baseline scoreboard above.
 - Wrote exit criteria + backlog. No code change. Next: **I1 (conformal intervals)**.
+
+### Iteration 1 — honest intervals via split-conformal — KEPT ✅
+- **Hypothesis:** the 80% floor/ceiling interval undercovers (0.346) because it uses the bootstrap
+  ensemble; a split-conformal layer gives finite-sample marginal coverage ≈ nominal.
+- **Change:** `DraftBoardService` gained a `conformal` field; `rank()` now derives floor/ceiling
+  from `SplitConformalRegressor` (alpha=0.2) when present, else falls back to the ensemble. Fit in
+  `build_service_from_table` (≥20 reached rows) and `build_demo_service`
+  (`src/nba_draft/service/board.py`). Ensemble retained for tier scenarios.
+- **Result:** 80% interval coverage on the locked holdout **0.346 → 0.808** (n=78 reached; mean
+  width 1.83 BPM, qhat 0.913), measured via the real served path (`build_service_from_table` on
+  dev → `rank()` holdout). Ranking/Spearman unchanged (point estimate untouched); reach calibration
+  unchanged.
+- **Leakage check:** conformal calibrates *within* the training fold only; holdout never used to
+  fit. No new leakage.
+- **Tests/gates:** added `test_conformal_interval_is_attached_and_calibrated`; full suite + ruff +
+  mypy green. API shape unchanged → frontend unaffected (floor/ceiling just honestly wider).
+- **Evidence:** live real board — Cooper Flagg proj 0.71, floor −0.34, ceil 1.58 (±0.96).
+- Next: **I2 (beat the draft-position baseline)**.

@@ -37,6 +37,26 @@ def test_rank_returns_projection_interval_and_scenarios(service_and_pool):
     assert all(abs(p - 1.0) < 1e-6 for p in probs)
 
 
+def test_conformal_interval_is_attached_and_calibrated(service_and_pool):
+    """Floor/ceiling come from the split-conformal layer (finite-sample marginal coverage),
+    not the historically-overconfident bootstrap. Its signature is a constant-width interval."""
+    import numpy as np
+
+    service, pool = service_and_pool
+    assert service.conformal is not None
+    board = service.rank(pool)
+    floor = board["floor"].to_numpy()
+    ceiling = board["ceiling"].to_numpy()
+    point = board["projected_impact"].to_numpy()
+    # point estimate lies inside the interval...
+    assert bool(np.all((point >= floor - 1e-6) & (point <= ceiling + 1e-6)))
+    # ...and the width is constant (= 2*qhat), the distinguishing mark of conformal vs ensemble
+    # (tolerance covers the 3-decimal rounding applied to floor/ceiling in rank()).
+    widths = ceiling - floor
+    assert float(widths.max() - widths.min()) < 1e-2
+    assert float(widths.mean()) > 0.0
+
+
 def test_explain_is_additive(service_and_pool):
     service, pool = service_and_pool
     row = pool.head(1)
