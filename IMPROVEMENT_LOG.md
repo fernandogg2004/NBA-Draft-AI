@@ -155,3 +155,16 @@ real_run_summary.json`) is cited where it differs.
 - **Tests/gates:** added a conformal-scenarios test; relaxed a tier-sum assertion to match the
   documented 4-decimal display rounding (probs sum to 1 pre-rounding); suite + ruff + mypy green.
 - Next: milestone holdout re-check + readiness report (I7).
+
+### Iteration 5 — milestone holdout re-check + EXIT (I7)
+- **After scoreboard (locked holdout 2019–2020):** served ranking 0.263 → **0.497** (vs baseline
+  0.516); 80% coverage 0.346 → **0.808**; tier multiclass ECE 0.284 → **0.104**; P(starter+) ECE
+  0.311 → **0.095**; reach ECE 0.049; longevity concordance 0.659; no-placeholder **PASS**;
+  tests/ruff/mypy/frontend **green** (191 tests, 82 files typed).
+- **Exit decision:** the two red items (interval coverage, tier calibration) are fixed; the ranking
+  ceiling ("beat consensus") is real and **honestly scoped out** with evidence; all shown stats are
+  real; ≥2 targets validated. Further holdout variant-hunting would risk overfitting the holdout
+  (anti-gaming). → **EXIT at diminishing returns.** Final deliverable: `NBA_READINESS_REPORT.md`.
+- **Not done / scoped:** beating consensus (needs more eras/signal — gated on data); age-fetch
+  `'resultSet'` failures (imputed; live debug gated on network); eval/served model alignment
+  (cosmetic). All documented in the readiness report.
