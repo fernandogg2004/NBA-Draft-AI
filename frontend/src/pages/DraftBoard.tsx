@@ -192,7 +192,8 @@ export function DraftBoard() {
                 Showing 1–{data.length} of {data.length} Prospects
               </SectionLabel>
               <p className="font-label-caps text-[10px] text-on-surface-variant">
-                Steal/Reach = model rank vs. actual pick. Team-specific fit →{" "}
+                Steal/Reach = model rank vs. actual pick (exploratory — the model matches, not beats,
+                the draft consensus on backtests). Team-specific fit →{" "}
                 <button
                   className="text-brand-orange hover:underline"
                   onClick={() => navigate("/team-fit")}
