@@ -53,6 +53,27 @@ def test_parse_draft_history_tolerates_missing_team_columns():
     assert row["team_abbr"] is None and row["team_name"] is None
 
 
+def test_parse_player_awards_counts_all_star_and_all_nba():
+    from nba_draft.ingestion.parse import parse_player_awards
+
+    raw = _payload(
+        ["PERSON_ID", "DESCRIPTION", "SEASON"],
+        [
+            [1, "All-Star", "2019-20"],
+            [1, "All-Star", "2020-21"],
+            [1, "All-NBA", "2020-21"],
+            [1, "NBA Most Valuable Player", "2020-21"],  # ignored
+        ],
+    )
+    assert parse_player_awards(raw) == (2, 1)
+
+
+def test_parse_player_awards_empty_is_zero():
+    from nba_draft.ingestion.parse import parse_player_awards
+
+    assert parse_player_awards(_payload(["PERSON_ID", "DESCRIPTION"], [])) == (0, 0)
+
+
 def test_parse_combine_casts_measurements():
     raw = _payload(
         ["SEASON", "PLAYER_ID", "FIRST_NAME", "LAST_NAME", "PLAYER_NAME", "POSITION",

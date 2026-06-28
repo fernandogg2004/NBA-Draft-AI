@@ -26,10 +26,13 @@ log = get_logger("run_real_pipeline")
 # (build_service_from_master holds out the latest draft_year). Adding it only pulls that class's
 # endpoints; 2011-2020 stay cache hits. 2026 isn't on stats.nba.com yet, so the latest real draft is
 # 2025 — set PROJECT_DRAFT_YEAR to whatever the newest available class is.
-TRAIN_DRAFT_YEARS = list(range(2011, 2021))
+# Widened to 16 training classes (2005-2020) to enlarge the sample — the single biggest lever on
+# the model's ceiling (more folds, better marginal-signal estimate). Outcome seasons cover every
+# class's 4-year window (through 2023-24). PLUS the most-recent class to PROJECT (2025).
+TRAIN_DRAFT_YEARS = list(range(2005, 2021))
 PROJECT_DRAFT_YEAR = 2025
 DRAFT_YEARS = [*TRAIN_DRAFT_YEARS, PROJECT_DRAFT_YEAR]
-OUTCOME_SEASONS = [f"{y}-{str(y + 1)[-2:]}" for y in range(2011, 2024)]
+OUTCOME_SEASONS = [f"{y}-{str(y + 1)[-2:]}" for y in range(2005, 2024)]
 
 
 def main() -> None:

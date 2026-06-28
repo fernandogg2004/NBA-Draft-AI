@@ -19,6 +19,7 @@ from nba_draft.ingestion.parse import (
 )
 from nba_draft.realdata.age import AGE_FEATURE_COLUMNS, pull_player_ages
 from nba_draft.realdata.college import COLLEGE_FEATURE_COLUMNS, link_college_features
+from nba_draft.realdata.honors import pull_player_honors
 from nba_draft.realdata.intl import INTL_FEATURE_COLUMNS, link_intl_features
 from nba_draft.targets import add_impact_metrics, build_player_outcomes
 from nba_draft.targets.definitions import (
@@ -432,6 +433,7 @@ def run_real_pipeline(
     cbd_ingester: Any | None = None,
     intl_ingester: Any | None = None,
     with_age: bool = True,
+    with_honors: bool = True,
     tune: bool = True,
     n_trials: int = 30,
     output_root: str | Path = "artifacts/real_pipeline",
@@ -456,10 +458,12 @@ def run_real_pipeline(
         cbd_ingester=cbd_ingester, intl_ingester=intl_ingester,
     )
     ages = pull_player_ages(ingester, frames.draft_history) if with_age else None
+    # Honors enrich the top outcome tiers with real All-Star/All-NBA selections (label quality).
+    honors = pull_player_honors(ingester, frames.draft_history) if with_honors else None
     table = build_real_modeling_table(
         frames.draft_history, frames.combine, frames.player_seasons,
         data_through_year=frames.data_through_year, cbd_seasons=frames.cbd_seasons,
-        intl_seasons=frames.intl_seasons, ages=ages,
+        intl_seasons=frames.intl_seasons, ages=ages, honors=honors,
     )
     # Production features fuse the draft-pick consensus WITH public data, used in BOTH hurdle heads.
     # College-named production columns are kept if EITHER NCAA or international data populates them.
