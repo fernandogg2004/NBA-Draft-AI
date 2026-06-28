@@ -38,6 +38,19 @@ def test_parse_draft_history():
     row = df.row(0, named=True)
     assert row["player_id"] == 1 and row["draft_year"] == 2023
     assert row["draft_pick"] == 3 and row["organization"] == "Duke"
+    # NBA team that made the pick is captured for the post-draft view.
+    assert row["team_abbr"] == "XYZ" and row["team_name"] == "Y"
+
+
+def test_parse_draft_history_tolerates_missing_team_columns():
+    # Older payloads without team columns must yield nulls, not raise.
+    raw = _payload(
+        ["PERSON_ID", "PLAYER_NAME", "SEASON", "ROUND_NUMBER", "OVERALL_PICK",
+         "ORGANIZATION", "ORGANIZATION_TYPE"],
+        [[1, "Jane Doe", 2014, 1, 3, "Duke", "College"]],
+    )
+    row = parse_draft_history(raw).row(0, named=True)
+    assert row["team_abbr"] is None and row["team_name"] is None
 
 
 def test_parse_combine_casts_measurements():

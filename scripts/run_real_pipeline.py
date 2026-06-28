@@ -20,9 +20,14 @@ from nba_draft.utils.logging import get_logger
 
 log = get_logger("run_real_pipeline")
 
-# Widened window: 10 draft classes (2011-2020), whose 4-year debut windows all resolve from
-# the outcome seasons below (through 2023-24). More classes -> more walk-forward folds.
-DRAFT_YEARS = list(range(2011, 2021))
+# Training window: 10 draft classes (2011-2020), whose 4-year debut windows all resolve from the
+# outcome seasons below (through 2023-24). PLUS the current class to PROJECT (2026): it has no NBA
+# outcomes yet, so it is auto-excluded from training/eval and becomes the served board's pool
+# (build_service_from_master holds out the latest draft_year). Adding 2026 only pulls the new 2026
+# endpoints; 2011-2020 stay cache hits. No new outcome seasons are needed to project 2026.
+TRAIN_DRAFT_YEARS = list(range(2011, 2021))
+PROJECT_DRAFT_YEAR = 2026
+DRAFT_YEARS = [*TRAIN_DRAFT_YEARS, PROJECT_DRAFT_YEAR]
 OUTCOME_SEASONS = [f"{y}-{str(y + 1)[-2:]}" for y in range(2011, 2024)]
 
 
@@ -40,6 +45,10 @@ def main() -> None:
         ing, draft_years=DRAFT_YEARS, outcome_seasons=OUTCOME_SEASONS,
         cbd_ingester=cbd, intl_ingester=intl, min_train_years=4, n_holdout_years=2,
         tune=True, n_trials=30,
+        # Scouting-only board: keep draft_pick OUT of the model features so the served ranking is
+        # independent of where players were actually picked -> honest "steals & reaches". The pick
+        # is still kept as a column for display + the draft-position baseline comparison.
+        exclude_pick_feature=True,
     )
     log.info(
         "drafted=%d  resolved=%d  model=%s  holdout=%s",

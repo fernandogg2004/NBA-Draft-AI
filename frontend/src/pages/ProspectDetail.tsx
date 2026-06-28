@@ -10,6 +10,7 @@ import {
   Card,
   Chip,
   ErrorState,
+  Headshot,
   Loading,
   MetricTile,
   Placeholder,
@@ -57,15 +58,20 @@ export function ProspectDetail() {
       {/* ---- Hero ---- */}
       <Card className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full border border-outline-variant bg-surface-container-highest">
-            <Icon name="person" size={36} className="text-on-surface-variant" />
-          </div>
+          <Headshot url={row.headshot_url} size={64} alt={row.full_name} />
           <div>
             <h1 className="font-headline-lg text-headline-lg font-semibold text-on-surface">
               {row.full_name}
             </h1>
+            {row.draft_pick != null && (
+              <p className="mt-0.5 font-label-caps text-label-caps text-brand-orange">
+                Drafted #{row.draft_pick}
+                {row.team_abbr ? ` · ${row.team_abbr}` : ""}
+              </p>
+            )}
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {row.archetype && <Chip tone="primary">{row.archetype}</Chip>}
+              {row.position && <Chip>POS · {row.position}</Chip>}
               <Chip>
                 AGE · {row.age != null ? row.age.toFixed(1) : <Placeholder label="—" />}
               </Chip>
@@ -155,27 +161,29 @@ export function ProspectDetail() {
           </p>
         </Card>
 
-        {/* ---- Combine (wingspan real; rest not measured in this pool) ---- */}
+        {/* ---- Combine (real measurements; null = did not test) ---- */}
         <Card>
           <SectionLabel className="mb-3">Combine Data</SectionLabel>
           <dl className="divide-y divide-outline-variant/50">
-            <div className="flex items-center justify-between py-2">
-              <dt className="font-body-sm text-[13px] text-on-surface-variant">Wingspan</dt>
-              <dd className="font-data-tabular text-[13px] text-on-surface">
-                {row.wingspan_in != null ? `${row.wingspan_in.toFixed(1)}"` : <Placeholder label="—" />}
-              </dd>
-            </div>
-            {["Standing Vertical", "Max Vertical", "Lane Agility"].map((k) => (
-              <div key={k} className="flex items-center justify-between py-2">
-                <dt className="font-body-sm text-[13px] text-on-surface-variant">{k}</dt>
-                <dd>
-                  <Placeholder label="not measured" />
+            {(
+              [
+                ["Wingspan", row.wingspan_in, '"'],
+                ["Standing Reach", row.standing_reach_in, '"'],
+                ["Max Vertical", row.max_vertical_in, '"'],
+                ["Lane Agility", row.lane_agility_s, "s"],
+                ["Body Fat", row.body_fat_pct, "%"],
+              ] as [string, number | undefined, string][]
+            ).map(([label, value, unit]) => (
+              <div key={label} className="flex items-center justify-between py-2">
+                <dt className="font-body-sm text-[13px] text-on-surface-variant">{label}</dt>
+                <dd className="font-data-tabular text-[13px] text-on-surface">
+                  {value != null ? `${value.toFixed(1)}${unit}` : <Placeholder label="not measured" />}
                 </dd>
               </div>
             ))}
           </dl>
           <p className="mt-1 font-label-caps text-[10px] text-on-surface-variant">
-            Wingspan is in the pool; other Combine drills aren’t collected for this dataset.
+            From the NBA Draft Combine; prospects who didn’t test show “not measured”.
           </p>
         </Card>
       </div>

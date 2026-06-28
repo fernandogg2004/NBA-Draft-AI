@@ -101,8 +101,20 @@ def _result_frame(raw_json: str, result_index: int = 0) -> pl.DataFrame:
 
 
 def parse_draft_history(raw_json: str) -> pl.DataFrame:
-    """DraftHistory -> [player_id, full_name, draft_year, draft_pick, draft_round, organization]."""
+    """DraftHistory -> player_id, name, draft_year/pick/round, pre-NBA org, and NBA team.
+
+    The NBA team that made the pick (``team_abbr``/``team_name``) is captured for the post-draft
+    view; these columns are present in the DraftHistory payload but were previously dropped. Cast
+    non-strictly so a missing team field yields nulls rather than raising.
+    """
     df = _result_frame(raw_json)
+
+    def opt(col: str, dtype: Any, alias: str) -> pl.Expr:
+        # Tolerate columns that some seasons omit -> null-filled rather than KeyError.
+        if col in df.columns:
+            return pl.col(col).cast(dtype, strict=False).alias(alias)
+        return pl.lit(None, dtype=dtype).alias(alias)
+
     return df.select(
         pl.col("PERSON_ID").cast(pl.Int64).alias("player_id"),
         pl.col("PLAYER_NAME").cast(pl.Utf8).alias("full_name"),
@@ -111,6 +123,8 @@ def parse_draft_history(raw_json: str) -> pl.DataFrame:
         pl.col("ROUND_NUMBER").cast(pl.Int64).alias("draft_round"),
         pl.col("ORGANIZATION").cast(pl.Utf8).alias("organization"),
         pl.col("ORGANIZATION_TYPE").cast(pl.Utf8).alias("organization_type"),
+        opt("TEAM_ABBREVIATION", pl.Utf8, "team_abbr"),
+        opt("TEAM_NAME", pl.Utf8, "team_name"),
     )
 
 

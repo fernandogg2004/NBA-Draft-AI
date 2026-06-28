@@ -79,6 +79,67 @@ def test_ranked_with_profile_adds_real_profile_fields(service_and_pool):
     assert set(board["archetype"].unique()).issubset(set(_ARCHETYPE_LABELS))
 
 
+def test_ranked_with_profile_real_shaped_pool():
+    """The enrichment must work on the REAL schema: college per-40, age_at_draft, and an
+    unlabeled post-draft pool carrying actual pick/team — producing steals/reaches + photos."""
+    import numpy as np
+    import polars as pl
+
+    from nba_draft.service import build_service_from_table
+
+    rng = np.random.default_rng(0)
+    n = 40
+    skill = rng.normal(size=n)
+    peak = [float(2 * skill[i] + rng.normal(0, 0.3)) if skill[i] > -0.3 else None for i in range(n)]
+    train = pl.DataFrame(
+        {
+            "player_id": list(range(n)),
+            "full_name": [f"P{i}" for i in range(n)],
+            "draft_year": [2018 + (i % 3) for i in range(n)],
+            "pts_per40": np.clip(15 + 4 * skill, 3, 30),
+            "ast_per40": np.clip(3 + skill, 0, 8),
+            "reb_per40": np.clip(6 + skill, 1, 14),
+            "blk_per40": np.clip(0.8 + 0.3 * skill, 0, 3),
+            "stl_per40": np.clip(1.0 + 0.2 * skill, 0, 2.5),
+            "true_shooting": np.clip(0.55 + 0.03 * skill, 0.45, 0.65),
+            "wingspan_in": np.clip(82 + 1.5 * skill, 76, 92),
+            "age_at_draft": np.clip(20 - 0.3 * skill, 18, 23),
+            "reached": [bool(s > -0.3) for s in skill],
+        }
+    ).with_columns(pl.Series("peak_impact", peak, dtype=pl.Float64))
+    feats = ["pts_per40", "ast_per40", "reb_per40", "blk_per40", "stl_per40",
+             "true_shooting", "wingspan_in", "age_at_draft"]
+    service = build_service_from_table(
+        train, feats, target_col="peak_impact", reached_col="reached"
+    )
+
+    pool = pl.DataFrame(
+        {
+            "player_id": [900, 901, 902],
+            "full_name": ["Rookie A", "Rookie B", "Rookie C"],
+            "draft_year": [2026, 2026, 2026],
+            "draft_pick": [1, 2, 15],
+            "team_abbr": ["ATL", "WAS", "LAL"],
+            "position": ["G", "F", "C"],
+            "pts_per40": [24.0, 18.0, 12.0], "ast_per40": [6.0, 3.0, 1.0],
+            "reb_per40": [5.0, 7.0, 11.0], "blk_per40": [0.3, 1.2, 2.4],
+            "stl_per40": [2.0, 1.0, 0.4], "true_shooting": [0.60, 0.56, 0.62],
+            "wingspan_in": [80.0, 84.0, 89.0], "age_at_draft": [19.2, 20.1, 18.7],
+        }
+    )
+    board = service.ranked_with_profile(pool)
+    # Skills are derived from per-40 (non-zero) and age comes from age_at_draft.
+    assert board.select([f"skill_{d}" for d in SKILL_DIMS]).to_numpy().sum() > 0
+    assert board["age"].null_count() == 0
+    # model_rank is a dense 1..n ranking; slot_delta = draft_pick - model_rank.
+    assert sorted(board["model_rank"].to_list()) == [1, 2, 3]
+    rows = {r["player_id"]: r for r in board.to_dicts()}
+    for r in rows.values():
+        assert r["slot_delta"] == r["draft_pick"] - r["model_rank"]
+        assert r["team_abbr"] in {"ATL", "WAS", "LAL"}
+        assert r["headshot_url"].endswith(f"{r['player_id']}.png")
+
+
 def test_counterfactual_lifts_a_low_prospect_toward_next_tier(service_and_pool):
     import polars as pl
 
@@ -337,3 +398,67 @@ def test_build_service_from_master_round_trip(tmp_path):
     # accepting a manifest path directly works too
     service2, _ = build_service_from_master(serving / "serving_manifest.json")
     assert service2.hurdle is not None
+
+
+def test_build_service_from_master_serves_unlabeled_latest_class(tmp_path):
+    """The 2026 use-case: an unlabeled latest class (no outcomes yet) is the projection pool and is
+    excluded from training, which uses only the older resolved classes."""
+    import json
+
+    import numpy as np
+    import polars as pl
+
+    from nba_draft.service import build_service_from_master
+
+    rng = np.random.default_rng(7)
+    rows = []
+    for year in (2018, 2019, 2020):  # resolved training classes
+        for _ in range(25):
+            skill = rng.normal()
+            reached = (skill + rng.normal(scale=0.5)) > 0.0
+            rows.append(
+                {
+                    "player_id": len(rows),
+                    "full_name": f"P{len(rows)}",
+                    "draft_year": year,
+                    "f_skill": skill + rng.normal(scale=0.2),
+                    "reached": bool(reached),
+                    "peak_impact": (2.0 * skill if reached else None),
+                }
+            )
+    # The current (2026) class: pre-draft features only, NO outcome labels.
+    for _ in range(15):
+        rows.append(
+            {
+                "player_id": len(rows),
+                "full_name": f"Rookie{len(rows)}",
+                "draft_year": 2026,
+                "f_skill": rng.normal(),
+                "reached": None,
+                "peak_impact": None,
+            }
+        )
+    table = pl.DataFrame(rows)
+    serving = tmp_path / "serving"
+    serving.mkdir()
+    table.write_parquet(serving / "modeling_table.parquet")
+    (serving / "serving_manifest.json").write_text(
+        json.dumps(
+            {
+                "table": "modeling_table.parquet",
+                "feature_cols": ["f_skill"],
+                "target_col": "peak_impact",
+                "reached_col": "reached",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service, pool = build_service_from_master(serving)
+    # Only the unlabeled 2026 class is served as the pool...
+    assert pool["draft_year"].unique().to_list() == [2026]
+    assert pool["peak_impact"].null_count() == pool.height  # no outcomes
+    # ...and the board still ranks it (trained on the older labeled classes).
+    board = service.ranked_with_profile(pool)
+    assert board.height == pool.height
+    assert "projected_impact" in board.columns and board["model_rank"].n_unique() == pool.height

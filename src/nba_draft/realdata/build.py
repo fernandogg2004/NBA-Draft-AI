@@ -152,11 +152,15 @@ def build_real_modeling_table(
         )
     labels = pl.DataFrame(label_rows)
 
-    draft = draft_history.select("player_id", YEAR_COLUMN, PICK_COLUMN, "full_name").unique(
-        subset=["player_id"], keep="first"
-    )
+    # Carry display metadata for the post-draft view (team that drafted the player) when present.
+    draft_meta = [c for c in ("team_abbr", "team_name") if c in draft_history.columns]
+    draft = draft_history.select(
+        "player_id", YEAR_COLUMN, PICK_COLUMN, "full_name", *draft_meta
+    ).unique(subset=["player_id"], keep="first")
     combine_cols = [c for c in COMBINE_FEATURES if c in combine.columns]
-    combine_feats = combine.select(["player_id", *combine_cols])
+    # Position is display metadata (not a model feature); include it if the Combine feed has it.
+    combine_meta = ["position"] if "position" in combine.columns else []
+    combine_feats = combine.select(["player_id", *combine_cols, *combine_meta])
 
     table = (
         draft.join(labels, on="player_id", how="left")
@@ -435,12 +439,17 @@ def run_real_pipeline(
     min_train_years: int = 4,
     n_holdout_years: int = 2,
     tracking_enabled: bool = False,
+    exclude_pick_feature: bool = False,
 ) -> RealPipelineResult:
     """End-to-end on real data: pull → labels → hurdle CV + holdout eval → register.
 
     Pull/build are env-pending (need a residential IP + `CBD_API_KEY`); the modeling/evaluation is
     delegated to `evaluate_real_models`, which is unit-tested offline. `intl_ingester` (EuroLeague)
     fills pre-draft features for international prospects who lack NCAA data.
+
+    With ``exclude_pick_feature`` the draft pick is dropped from the model's features (it remains a
+    column for display + the draft-position baseline). This yields a scouting-only board whose
+    ranking is independent of the actual draft slot — needed for an honest "steals & reaches" view.
     """
     frames = pull_real_frames(
         ingester, draft_years=draft_years, outcome_seasons=outcome_seasons,
@@ -456,7 +465,8 @@ def run_real_pipeline(
     # College-named production columns are kept if EITHER NCAA or international data populates them.
     has_production = frames.cbd_seasons is not None or frames.intl_seasons is not None
     feats = (
-        [PICK_COLUMN, *COMBINE_FEATURES]
+        ([] if exclude_pick_feature else [PICK_COLUMN])
+        + list(COMBINE_FEATURES)
         + (COLLEGE_FEATURE_COLUMNS if has_production else [])
         + (AGE_FEATURE_COLUMNS if ages is not None else [])
     )
