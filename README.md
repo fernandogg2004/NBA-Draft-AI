@@ -419,5 +419,3 @@ Being explicit about the limits is part of the deliverable:
 
 ---
 
-*Built phase-by-phase with verifiable milestones; see `instructions.md` for the original
-specification and domain-risk checklist.*
