@@ -1,421 +1,183 @@
-# NBA Draft AI — Decision-Support System
+# NBA Draft AI — draft decision support with leakage-safe evaluation
 
 [![CI](https://github.com/fernandogg2004/NBA-Draft-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/fernandogg2004/NBA-Draft-AI/actions/workflows/ci.yml)
 
-A **human-in-the-loop** decision-support system for NBA draft decisions. For each prospect it:
+A decision-support system that ranks NBA draft prospects by expected NBA value, attaches calibrated
+uncertainty to every projection and explains each recommendation — evaluated on a locked temporal
+holdout so that the reported performance is honest.
 
-1. **Projects** future NBA production / trajectory,
-2. **Estimates** contribution to winning,
-3. **Evaluates fit** with a *specific* roster and system of play, and
-4. **Quantifies the uncertainty** of every prediction.
+## The problem
 
-It is a tool to *augment* scouting, not replace it. The guiding principle throughout is
-**validity over spectacle**: an honest, well-validated baseline beats a flashy, poorly-evaluated
-model. Every design decision that touches a known draft-modeling trap (data leakage,
-survivorship bias, opportunity confound, era effects, small samples, fat tails) is handled
-explicitly and flagged in code.
+Draft models are easy to make look good and hard to make useful. Typical failure modes are data
+leakage (using information that only exists after the draft), survivorship bias (NBA statistics
+only exist for players who made it), era effects and very small samples. This project builds the
+whole pipeline — ingestion, labels, features, models, uncertainty, serving — around those traps,
+and asks a precise question: **do public pre-draft data add ranking signal beyond the draft order
+itself, which already aggregates the judgment of 30 front offices?**
 
----
+## At a glance
 
-## Table of contents
+| | |
+|---|---|
+| **Approach** | Two-part *hurdle* target, `P(reach rotation) · E(impact \| reached) + (1 − P) · replacement`, fit with ridge / gradient boosting; split-conformal prediction intervals; calibrated outcome-tier classifier; Cox model for career length; SHAP and counterfactual explanations |
+| **Data** | Public: `stats.nba.com` (via `nba_api`), CollegeBasketballData.com API, EuroLeague live API. Draft classes 2005–2020 for training and evaluation; the 2025 class as the projected board |
+| **Evaluation** | Strictly temporal: walk-forward CV on 2005–2018, **locked holdout = 2019 + 2020 draft classes**, never used for tuning or model selection |
+| **Main result** | The served model **matches but does not beat** the draft-position baseline on the holdout (Spearman 0.469 vs 0.516). Uncertainty is calibrated: 80% intervals cover ~78–81% of outcomes |
+| **Status** | Functional research prototype (library + FastAPI + Streamlit + React front end). Not deployed |
 
-- [Headline result](#headline-result)
-- [How it works](#how-it-works)
-- [Data](#data)
-- [What the model predicts](#what-the-model-predicts)
-- [The fit module](#the-fit-module)
-- [Uncertainty & interpretability](#uncertainty--interpretability)
-- [Project structure](#project-structure)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Configuration](#configuration)
-- [Quality & testing](#quality--testing)
-- [Limitations & honest caveats](#limitations--honest-caveats)
-- [Documentation](#documentation)
+## Results
 
----
+All figures below come from the project's own development log (`IMPROVEMENT_LOG.md` and
+`NBA_READINESS_REPORT.md`, commit [`a0132a5`](https://github.com/fernandogg2004/NBA-Draft-AI/commit/a0132a5),
+later removed from the tree). They were produced on real data with `scripts/run_real_pipeline.py`,
+whose output artifacts are not committed. They are **consistent with the code but have not been
+independently re-run** for this README (the data pull requires a residential IP; see
+*Reproduction*).
 
-## Headline result
+Locked holdout: draft classes 2019–2020 (≈115 resolved prospects, 78 of whom reached a rotation role).
 
-On **real data** (2011–2020 draft classes, 389 trainable players), the **production model** — a
-tuned gradient-boosting model that fuses the **draft-position consensus** with **public pre-draft
-data** (college production + Combine measurements + age-at-draft) — **beats the draft-position
-baseline** at ranking prospects by realized NBA impact:
+| Metric | Result | Protocol / notes |
+|---|---|---|
+| Ranking of realized value — served hurdle model | Spearman **0.469** | Holdout; trained on 2005–2018; draft pick included as a feature |
+| Ranking of realized value — draft-position baseline | Spearman **0.516** | Same holdout; ranks by pick number |
+| Same model without the draft pick ("scouting-only") | Spearman 0.263 | Same holdout; earlier run trained on 2011–2018 |
+| 80% prediction-interval coverage | **0.78–0.81** | Split-conformal, calibrated inside the training fold (0.346 before conformal) |
+| Outcome-tier probabilities, multiclass ECE | **0.111** | Against honors-aware tiers (bust → superstar); 0.390 before the tier classifier |
+| Reach-a-rotation-role probability, ECE | 0.097 | Holdout |
+| Career length (Cox PH), concordance | 0.659 | Holdout; 2011–2020 sample |
 
-| model | features | Spearman ↑ | RMSE ↓ |
-|---|---|---|---|
-| **production (tuned GBM)** | draft pick + college + age + combine | **0.336** | **0.697** |
-| production (ridge) | draft pick + college + age + combine | 0.314 | 0.704 |
-| data-only (tuned GBM) | college + age + combine (no pick) | 0.302 | 0.704 |
-| data-only (ridge) | college + age + combine (no pick) | 0.302 | 0.709 |
-| **draft-position baseline** | draft pick only | 0.233 | 0.700 |
+**How to read this.** With ~115 holdout players, a difference of 0.05 in Spearman is within
+sampling noise, so the honest conclusion is *"matches the consensus"*, not *"loses to it"* or
+*"beats it"*. The negative result was stress-tested: doubling the training sample (594 → 954
+resolved players by adding 2005–2010) raised walk-forward CV from 0.43 to 0.59 but left the
+holdout unchanged, and adding high-school recruiting rankings added no signal. The evidence points
+to a structural ceiling of public box-score / combine / age features rather than a modelling defect.
 
-The progression is the story:
-
-> **consensus alone (0.233) → public data alone (0.302) → consensus + data (0.336)**
-
-A model built only from public box data already **matches** the collective judgment of every NBA
-front office; fusing that data **with** the draft consensus beats either source alone. Age was
-the single most valuable added feature, exactly as draft-modeling literature predicts.
-
-Target = peak impact (eBPM) over the first 4 NBA seasons, *conditional on reaching* a rotation
-role. Evaluation is strictly temporal (train on older classes, test on newer ones). These numbers
-are **indicative, not precise** — see [caveats](#limitations--honest-caveats).
-
-> **Note (post-audit).** The numbers above are from an earlier *conditional-impact* run and are
-> kept as historical context. The production pipeline now ranks all prospects by the
-> **survivorship-robust hurdle** (`P(reach) × E(impact|reached) + (1−P)·replacement`) and reports
-> the headline on an **untouchable holdout** that tuning/CV never see — so re-run
-> `scripts/run_real_pipeline.py` to get current, unbiased hurdle-on-holdout figures.
-
----
+> An earlier version of this README reported that the model *beat* the draft-position baseline
+> (Spearman 0.336 vs 0.233). Those numbers came from a conditional-impact run evaluated without the
+> locked holdout and are superseded by the results above.
 
 ## How it works
 
-The system walks the full ML lifecycle. The hard part of draft modeling isn't the model — it's
-avoiding the inferential traps that make results look great and be worthless. So the architecture
-is built defense-first.
+1. **Temporal validation as the core contract.** `holdout_split` locks the most recent classes;
+   `walk_forward_folds` yields folds in which every training draft year precedes every validation
+   year and raises if a split would leak. Splits are by draft year, never by row.
+2. **Leakage firewall.** Stateless features (a player's own pre-draft numbers) are safe by
+   construction. Learned steps — inter-league translation, strength-of-schedule standardisation,
+   imputation, scaling — live in a `FoldPreprocessor` fit on the training fold only.
+   `assert_pre_draft_safe` rejects known post-draft columns.
+3. **Hurdle target against survivorship bias.** `P(reach)` is fit on *all* drafted players, so it
+   learns who washes out; conditional impact is fit only on players with stable minutes.
+4. **Own impact metric.** Basketball-Reference BPM cannot be scraped (robots.txt), so the project
+   computes **eBPM**, a documented box plus-minus proxy built from `nba_api` box/advanced data, and
+   VORP from it. Its rank agreement with the NBA's PIE metric is checked by `pie_rank_agreement`
+   (reported ρ ≈ 0.92 during development; not re-run here).
+5. **Models.** Draft-position baseline, regularised linear models, gradient boosting
+   (XGBoost/LightGBM with a scikit-learn fallback) tuned with Optuna *inside* the temporal CV, a
+   multinomial tier classifier and Cox PH for longevity.
+6. **Uncertainty and explanations.** Split-conformal intervals and tier probabilities, SHAP
+   attributions, permutation importance, partial dependence and counterfactuals ("smallest change
+   that moves this prospect up a tier").
+7. **Team fit (exploratory).** Archetype clustering, roster need and redundancy, a transparent
+   lineup Net-Rating proxy and a CBA/apron-aware surplus-value calculation
+   (`config/cba_rules.yaml`; 2026-27 values flagged as projections). Not validated against outcomes.
 
-### 1. Strictly temporal validation (anti-leakage core)
+## Data and provenance
 
-The real task is predicting the future of players who haven't debuted, so **all validation is
-temporal**:
-
-- `holdout_split` reserves the most-recent draft classes as an **untouchable test set** (never
-  used for tuning, feature design, or EDA).
-- `walk_forward_folds` yields folds where **every training draft year is strictly earlier than
-  every validation year**; each fold self-checks and raises rather than returning a leaky split.
-- Splitting is by **draft year (group)**, never by row — same-class players share era/context
-  that would otherwise leak.
-
-### 2. The leakage firewall (`FoldPreprocessor`)
-
-Features split into two classes, and the split *is* the defense:
-
-- **Stateless** features (a player's own pre-draft stats) are leakage-safe by construction.
-- **Learned** steps — inter-league translation, dynamic strength-of-schedule, comparable-league
-  imputation, scaling — are bundled into a `FoldPreprocessor` that is **fit on the training fold
-  only** and applied to validation/test. Fitting any of these on combined data would leak the
-  future.
-
-A guard (`assert_pre_draft_safe`) rejects any known post-draft column that tries to enter the
-feature matrix.
-
-### 3. The hurdle target (anti-survivorship)
-
-We only have NBA stats for players who actually played, so modeling "NBA impact" naively
-conditions on the outcome. The spine is a two-part / Heckman-style structure:
-
-```
-expected value = P(reach role) · E(impact | reached) + (1 − P(reach role)) · replacement_level
-```
-
-`P(reach)` is fit over **all** prospects (it learns who washes out); the conditional impact is fit
-only on players with enough minutes for a stable estimate, and labeled honestly as conditional.
-
-### 4. Feature engineering
-
-- **Stateless**: age- and possession-adjusted production, true shooting, usage, versatility /
-  archetype indicators, year-over-year deltas, and **Transfer-Portal/NIL-era** signals
-  (conference jump, role change, whether efficiency held up as competition rose).
-- **Learned (fold-fit)**: inter-league translation factors (so a EuroLeague line and an NCAA line
-  are comparable) and **dynamic strength-of-schedule** standardized within `(league, season)` —
-  never treated as a static player attribute.
-- **Combine** measurements, sign-normalized so higher = better.
-
-### 5. Modeling
-
-Simple and interpretable first, complexity only if it earns its keep under temporal validation:
-
-- Regularized regression (ridge / lasso / elastic-net), the **draft-position baseline to beat**,
-  gradient boosting (XGBoost → LightGBM → scikit-learn fallback), and survival analysis
-  (lifelines Cox PH) for career longevity.
-- Hyperparameters tuned with **Optuna inside the temporal CV** (so tuning can't leak), optimizing
-  the mean walk-forward ranking metric.
-
-### 6. Evaluation
-
-The product *orders* prospects, so **ranking metrics lead** (Spearman, Kendall, top-k hit rate),
-with **calibration** (Brier / ECE) for the classification targets, an honest comparison against
-the draft-position baseline, and **error analysis** (which player types the model fails on, e.g.
-weaker-league prospects) using out-of-fold predictions.
-
----
-
-## Data
-
-The system prefers APIs and open datasets, respects each source's Terms of Service and
-`robots.txt`, and rate-limits, caches, and records provenance (source, URL, timestamp, license,
-SHA-256) for every artifact. Source vetting is recorded in `config/sources.yaml`.
-
-| Source | Use | Status |
+| Source | Used for | Access |
 |---|---|---|
-| **stats.nba.com** via `nba_api` | NBA outcomes (draft history, player seasons), Combine measurements, birthdates | ✅ primary — **run locally** (cloud IPs get banned) |
-| **CollegeBasketballData.com** | NCAA pre-draft production (per-40 stats, true shooting, usage, ratings, PORPAG, win shares) | ✅ free API key (Bearer auth) |
-| Basketball-Reference / Bart Torvik / KenPom | — | ❌ excluded (their data paths are disallowed by `robots.txt` / paid) |
+| [stats.nba.com](https://www.nba.com/stats) via [`nba_api`](https://github.com/swar/nba_api) | Draft history, player seasons (labels), Draft Combine, birthdates, awards | Public; blocks datacenter IPs, so pulls must run on a personal machine |
+| [CollegeBasketballData.com](https://collegebasketballdata.com) | NCAA pre-draft production | Free API key (`CBD_API_KEY`) |
+| [EuroLeague live API](https://live.euroleague.net) | International pre-draft features | Public; opt-in with `NBA_DRAFT_AI_INTL=1` |
+| Basketball-Reference, Bart Torvik, KenPom | — | Deliberately excluded (robots.txt / paid) |
 
-**A key consequence:** BPM/VORP are Basketball-Reference's metrics and can't be scraped, so the
-system **computes its own impact metric** from `nba_api` raw box + advanced data:
+Every pulled artifact is cached with provenance (source, URL, timestamp, licence note, SHA-256);
+source vetting is recorded in `config/sources.yaml`. **No raw or processed data are committed.**
+The pipeline also runs on a deterministic **synthetic fixture** (`nba_draft.data.fixtures`) so the
+architecture can be exercised without network access — synthetic results are labelled as such and
+say nothing about real-world performance.
 
-- **eBPM** — a transparent, league-centered box plus-minus *proxy* (documented heuristic weights,
-  not BBRef's RAPM-calibrated BPM). It is validated against the official NBA **PIE** metric at a
-  Spearman of **≈0.92**, so rankings are trustworthy even though absolute magnitudes are approximate.
-- **VORP** — the exact standard formula, `VORP = (eBPM + 2.0) · minutes / (240 · 82)`.
+Label horizon: a player's first four NBA seasons, debut-anchored; prospects who do not reach the
+NBA within ~4 years of the draft count as non-reach; unfinished classes are treated as censored.
 
-`age-at-draft` is computed from `CommonPlayerInfo` birthdates (years to the late-June draft day).
+## Limitations
 
-Real pre-draft **features** available today are therefore: **college production (NCAA)** + **Combine
-measurements** + **age** + **draft pick**. International prospects (EuroLeague/NBL) lack college
-features and rely on the imputer. The whole pipeline also runs **fixture-first** on deterministic
-synthetic data, so the architecture is verifiable without any data access.
+- **No edge over the draft consensus** on the holdout; the "steals and reaches" view in the app
+  lists model–consensus disagreements, not a validated source of value.
+- **Small holdout** (two classes, ~115 players): rankings and calibration numbers carry wide
+  sampling error.
+- **eBPM is a proxy**, not BBRef BPM 2.0, and box-score metrics under-credit defence.
+- **NCAA-centric features**; international prospects rely heavily on imputation.
+- **Headline numbers not re-run here** — they depend on a local data pull and uncommitted artifacts.
+- **The fit module is exploratory**; the $-per-win conversion is an explicit assumption.
+- ~8% of players fail the per-player bio fetch in `nba_api` and get an imputed age.
 
----
+## Reproduction
 
-## What the model predicts
-
-Targets are defined declaratively in `config/targets.yaml` and built by a tested
-label-construction contract (`src/nba_draft/targets/`):
-
-- **Reach probability** — does the prospect become a rotation player within the horizon? (the
-  hurdle gate, fit over all prospects)
-- **Peak impact** — best-season eBPM over the first 4 NBA seasons (ceiling / talent).
-- **Cumulative value** — Σ VORP over the window (realized contribution to winning).
-- **Outcome-tier distribution** — P(bust / rotation / starter / all-star / superstar), the
-  decision-facing view (a high-ceiling/low-floor prospect reads differently from a safe one).
-- **Longevity** — career length via censoring-aware survival analysis.
-- **Real Surplus Value** — projected $ value minus the cheap rookie-scale cost (see fit module).
-
-**Horizon:** debut-anchored and capped — the window starts at a player's first NBA season; a
-prospect must reach the NBA within ~4 years of being drafted, else they count as a non-reach
-(so draft-and-stash internationals aren't unfairly marked busts). Recent, unfinished classes are
-treated as **right-censored**, not as low outcomes.
-
----
-
-## The fit module
-
-A player's value depends on the team that drafts them. This is the most differentiating — and
-most exploratory — part, so its outputs are explicitly flagged as higher-variance.
-
-- **Archetypes** — functional player profiles via clustering on style skills (not positions).
-- **Roster need** — which skills the current roster lacks (supply-based).
-- **Synergy vs redundancy** — does a prospect fill scarce needs or duplicate strengths?
-- **Lineup Net-Rating simulation** — concrete and actionable: estimates how the most-used
-  lineup's Net Rating changes if its weakest link is replaced by the rookie, e.g. *"Net Rating
-  goes from +9.3 to +14.4 (+5.1 per 100)."*
-- **Financial fit (CBA / aprons)** — **Real Surplus Value** modulated by cap pressure: a cheap
-  rookie contract is most valuable to a team over the second apron. CBA figures are
-  **parameterized per season** in `config/cba_rules.yaml` (2025-26 verified; 2026-27 projected and
-  flagged as an assumption) because the rules change yearly.
-
----
-
-## Uncertainty & interpretability
-
-**Uncertainty is mandatory, not optional** (the draft is fat-tailed):
-
-- Prediction intervals via **quantile regression**, **split-conformal** (finite-sample coverage),
-  **Bayesian** linear predictive std, and **bootstrap ensembles**.
-- Per-prospect **scenario distributions** over outcome tiers, plus floor/ceiling — so the tool
-  reflects boom-bust vs safe-but-limited as different decisions.
-
-**Interpretability** so scouts can challenge every recommendation:
-
-- **SHAP** (global importance + additive per-prospect explanations), model-agnostic **permutation
-  importance**, **partial dependence**, and **counterfactuals** ("what would need to change to
-  raise this projection?").
-
----
-
-## Project structure
-
-```
-config/            central, versioned configuration (config, targets, sources, CBA, leagues)
-src/nba_draft/
-  config.py        typed config loader
-  ingestion/       source registry, caching/rate-limit/retry/robots, provenance, parsers
-  cleaning/        normalization, entity resolution, imputation, versioned master dataset
-  targets/         target definitions + label construction + eBPM/VORP + outcome assembly
-  features/        stateless transforms + learned context model + assembler (leakage guard)
-  validation/      temporal splits, fold preprocessor, walk-forward runner
-  models/          baselines, model zoo, Optuna tuning, survival
-  evaluation/      ranking/calibration metrics, error analysis, baseline comparison
-  fit/             archetypes, need, synergy, lineup sim, financial (CBA) — player-team fit
-  uncertainty/     quantile, conformal, bayesian, ensemble, scenario distributions
-  interpretability/ SHAP, permutation importance, PDP, counterfactuals
-  service/         draft-board service (the logic the API and dashboard share)
-  realdata/        real nba_api + CollegeBasketballData pipeline (pull → labels → train)
-  mlops/           MLflow tracking, model registry, drift (PSI), retraining, pipeline
-api/               FastAPI service
-dashboard/         Streamlit GM dashboard
-scripts/           one-command entrypoints
-tests/             pytest suite (162 tests)
-docs/              design decisions, assumptions/limitations, usage, validation, MLOps
-```
-
----
-
-## Installation
-
-Requires **Python ≥ 3.11** (developed on 3.14; CI runs 3.12).
+Requires Python ≥ 3.11 (CI uses 3.12).
 
 ```bash
-python -m venv .venv
-# Windows PowerShell:  .venv\Scripts\Activate.ps1
-# Git Bash / macOS / Linux:  source .venv/Scripts/activate   (or .venv/bin/activate)
-
-pip install -e ".[dev]"          # core library + dev tooling (ruff, mypy, pytest)
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
+pip install -e ".[test]"        # library + everything the test suite imports
+pytest                          # 197 tests, no network access
+ruff check src tests scripts api dashboard
+mypy
 ```
 
-Optional dependency groups (install what you need):
-
-| extra | pulls in | for |
-|---|---|---|
-| `models` | xgboost, lightgbm, lifelines, pymc, optuna | gradient boosting, survival, tuning |
-| `explain` | shap, mapie | interpretability |
-| `app` | fastapi, uvicorn, streamlit, plotly | API + dashboard |
-| `mlops` | mlflow, dvc | tracking + data versioning |
-| `ingest` | requests, nba_api | the live local data pull |
-| `eda` | matplotlib | EDA plots |
+Synthetic end-to-end runs (no data access needed):
 
 ```bash
-pip install -e ".[test]"                                      # everything the test suite needs
-pip install -e ".[dev,models,explain,app,mlops,ingest,eda]"   # everything
+python scripts/reproduce.py        # temporal split -> baseline -> metrics (smoke test)
+python scripts/run_modeling.py     # model comparison on the fixture
+python scripts/run_pipeline.py     # full MLOps pipeline on the fixture
 ```
 
-> **To get green tests from zero:** `pip install -e ".[test]"` then `pytest`. The bare `[dev]`
-> extra installs only tooling, so several test files (which import xgboost/shap/fastapi) would fail.
-
----
-
-## Usage
-
-### Run analyses (synthetic demo — runs out of the box)
-
-```bash
-python scripts/reproduce.py        # smoke test: temporal split → baseline → metrics
-python scripts/run_eda.py          # → artifacts/eda/eda_report.md (+ plots with [eda])
-python scripts/run_modeling.py     # → artifacts/modeling/comparison.md
-python scripts/run_evaluation.py   # → artifacts/evaluation/evaluation_report.md
-python scripts/run_pipeline.py     # full MLOps pipeline (the one reproducible command)
-```
-
-### Serve the app
-
-```bash
-uvicorn api.main:app --reload                 # API docs at http://localhost:8000/docs
-streamlit run dashboard/streamlit_app.py      # GM dashboard at http://localhost:8501
-```
-
-API endpoints: `GET /health`, `GET /prospects` (ranked board), `GET /explain/{player_id}`,
-`GET /counterfactual/{player_id}` (smallest feature changes to reach the next outcome tier),
-`POST /fit` (submit a roster + cap situation → fit score, synergy sub-scores, lineup Net-Rating
-before→after, and narrative).
-
-**Web frontend (Front Office — Draft Command Center).** A React/Tailwind app implementing the
-Apex Front Office design lives in `frontend/`; it consumes the same FastAPI service. Run the API
-(above), then:
-
-```bash
-cd frontend && npm install && npm run dev    # http://localhost:5173 (proxies /api → :8000)
-```
-
-See `frontend/README.md` for screens, configuration, and build steps.
-
-### Run on real data
-
-The live pull must run on a **personal machine** (stats.nba.com blocks datacenter IPs).
+Real-data pipeline (personal machine; produces the results above):
 
 ```bash
 pip install -e ".[ingest,models,explain]"
-
-# 1. (optional) college features — get a free key at https://collegebasketballdata.com/key
-setx CBD_API_KEY "your-key"        # Windows; or export CBD_API_KEY=... in bash
-
-# 2. end-to-end real pipeline: pull → eBPM/VORP labels → temporal CV → tune → register
-python scripts/run_real_pipeline.py
+export CBD_API_KEY=...                # optional: college features
+python scripts/run_real_pipeline.py   # pull -> labels -> temporal CV -> tune -> holdout report
 ```
 
-The default run also **projects the current draft class (2026)** as the served board: it is pulled
-alongside the training classes but has no NBA outcomes yet, so it is auto-excluded from training/eval
-and becomes the pool that `build_service_from_master` ranks. The served model is **scouting-only**
-(`exclude_pick_feature=True`) — the draft pick is kept for display but not used as a feature — so the
-board ranking is independent of where players were actually picked, enabling an honest
-"steals & reaches" view (model rank vs. actual pick). For international coverage set
-`NBA_DRAFT_AI_INTL=1` before the run. Then serve it:
+The run logs the served-model and baseline holdout Spearman and writes a summary under
+`artifacts/real_pipeline/`. Serving:
 
 ```bash
-# point the API/dashboard at the rebuilt board (PowerShell: $env:NBA_DRAFT_AI_MASTER=...)
-export NBA_DRAFT_AI_MASTER="artifacts/real_pipeline/serving"
-uvicorn api.main:app --reload
+uvicorn api.main:app --reload                 # API docs at http://localhost:8000/docs
+streamlit run dashboard/streamlit_app.py      # analyst dashboard
+cd frontend && npm install && npm run dev     # React front end (proxies /api to :8000)
 ```
 
-Other entrypoints: `scripts/run_ingest.py` (raw NBA pull only), `scripts/verify_cbd.py` (verify
-the college API key + endpoints). To deploy a real-data service, point
-`service.build_demo_service` at the rebuilt master dataset.
+Checked for this README on 2026-10-26 (Python 3.12, Linux): `pip install -e ".[test]"`, `pytest`
+(197 passed), `ruff` (clean) and `scripts/reproduce.py` (runs). `mypy` reports one type error in
+`models/tuning.py` with the current Optuna release. The real-data pipeline was not run.
 
-### Reproduce from scratch with DVC
+## Repository structure
 
-```bash
-git init && dvc init && dvc repro    # runs the pipeline stage defined in dvc.yaml
+```
+src/nba_draft/
+  ingestion/  cleaning/  realdata/     data pull, caching, provenance, entity resolution
+  targets/  features/                  labels (eBPM/VORP, tiers), stateless + fold-fit features
+  validation/  evaluation/             temporal splits, walk-forward runner, metrics, error analysis
+  models/  uncertainty/                baselines, GBM/ridge, hurdle, tiers, survival, conformal
+  interpretability/  fit/  service/    SHAP/counterfactuals, team fit, draft-board service
+  mlops/                               MLflow tracking, registry, drift (PSI), retraining
+api/  dashboard/  frontend/            FastAPI, Streamlit, React
+config/                                all run-controlling parameters (validated on load)
+scripts/  tests/  docs/                entry points, test suite, design and validation notes
 ```
 
----
+Design rationale and the validation contract: [`docs/design_decisions.md`](docs/design_decisions.md),
+[`docs/validation.md`](docs/validation.md).
 
-## Configuration
+## Technologies
 
-All run-controlling knobs live in `config/*.yaml`, validated on load — no magic constants in code:
+Python, Polars, scikit-learn, XGBoost/LightGBM, Optuna, lifelines, SHAP, conformal prediction,
+FastAPI, Streamlit, React/TypeScript, MLflow, DVC, pytest, ruff, mypy, GitHub Actions.
 
-- `config.yaml` — seeds, prediction horizon, temporal-validation scheme, evaluation k's.
-- `targets.yaml` — target / outcome-tier definitions and thresholds.
-- `sources.yaml` — data-source registry with license + ToS/robots review and enable gates.
-- `cba_rules.yaml` — salary cap / aprons / rookie scale (per season; projections flagged).
-- `leagues.yaml`, `normalization.yaml` — league tiers and name/league normalization tables.
-- `params.yaml` — DVC-tracked parameters mirroring the above for the pipeline graph.
+## Author
 
----
-
-## Quality & testing
-
-```bash
-pytest                                          # 162 tests
-ruff check src tests scripts api dashboard      # lint
-mypy                                            # strict type checking
-```
-
-**162 tests** pass; `ruff` and `mypy --strict` are clean; GitHub Actions CI runs the full gate on
-every push and pull request. No test makes a network call (external services are injected/faked),
-so the suite is fully deterministic and CI-safe.
-
----
-
-## Limitations & honest caveats
-
-Being explicit about the limits is part of the deliverable:
-
-- **eBPM is a proxy, not BBRef's BPM 2.0.** Rankings are reliable (ρ≈0.92 vs PIE); treat absolute
-  magnitudes as indicative and recalibrate before any high-stakes use.
-- **Box-score metrics under-credit defense** — defensive specialists are under-served by the
-  impact projection.
-- **NCAA-centric.** International prospects lack college features and lean on imputed values.
-- **Small samples.** A few hundred trainable players over a limited history caps model complexity
-  and makes rare-tier (all-star/superstar) probabilities inherently uncertain. The **direction**
-  of results is robust; exact magnitudes are indicative.
-- **The fit module is exploratory** — the lineup Net-Rating model is a transparent proxy, not a
-  calibrated RAPM model, and the CBA `$`-per-win conversion is a flagged assumption.
-- **~9% of drafted players have no fetchable birthdate** — these are all players who never reached
-  the NBA (no `CommonPlayerInfo` record), so the impact model's age data is complete; they would be
-  imputed for a reach-classifier.
-
----
-
-## Documentation
-
-- [Design decisions](docs/design_decisions.md) — why the system is built the way it is
-- [Assumptions & limitations](docs/assumptions_and_limitations.md)
-- [Usage guide](docs/usage_guide.md) — install, run, real-data setup
-- [Validation protocol](docs/validation.md) — the temporal-validation contract
-- [MLOps](docs/mlops.md) — tracking, registry, drift, retraining
-
----
-
+**Fernando González González** — BSc Mathematics, Universidade de Santiago de Compostela.
+[LinkedIn](https://www.linkedin.com/in/fernando-gonzalez-gonzalez-math/) ·
+[GitHub](https://github.com/fernandogg2004)
