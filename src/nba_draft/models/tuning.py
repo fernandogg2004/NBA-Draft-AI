@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import polars as pl
 
@@ -82,8 +82,13 @@ def tune_estimator(
         )
         return report.aggregate[metric]
 
+    if direction not in ("maximize", "minimize"):
+        raise ValueError(f"direction must be 'maximize' or 'minimize', got {direction!r}")
+    study_direction: Literal["maximize", "minimize"] = (
+        "maximize" if direction == "maximize" else "minimize"
+    )
     study = optuna.create_study(
-        direction=direction, sampler=optuna.samplers.TPESampler(seed=seed)
+        direction=study_direction, sampler=optuna.samplers.TPESampler(seed=seed)
     )
     study.optimize(objective, n_trials=n_trials)
     return TuningResult(
